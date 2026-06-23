@@ -1,0 +1,45 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# typescript
+*.tsbuildinfo
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# logs
+*.log
+.npm-install.log
+
+# backend (api/)
+api/node_modules/
+api/dist/
+api/.env
+api/storage/
+# yt-dlp Windows binary (Railway pakai nixpacks, bukan .exe ini)
+api/bin/yt-dlp.exe

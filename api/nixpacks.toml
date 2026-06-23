@@ -1,0 +1,17 @@
+# nixpacks.toml — Railway build config untuk NestJS backend nineClip
+# Install yt-dlp + ffmpeg dari Nix packages (pengganti yt-dlp.exe Windows)
+
+[phases.setup]
+nixPkgs = ["yt-dlp", "ffmpeg"]
+
+[phases.build]
+cmds = [
+  "npm ci",
+  "npx prisma generate",
+  "npm run build",
+  # Salin binary yt-dlp Linux ke bin/yt-dlp.exe agar pipeline.service.ts tetap bisa pakai path yang sama
+  "mkdir -p bin && cp $(which yt-dlp) bin/yt-dlp.exe && chmod +x bin/yt-dlp.exe"
+]
+
+[start]
+cmd = "npx prisma migrate deploy && node dist/main"

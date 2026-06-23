@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String?
+  googleId     String?  @unique
+  planId       String   @default("free")
+  minutesUsed  Int      @default(0)
+  quotaResetAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Sprint 2 — Campaign Engine (satu akun, dua peran)
+  creditBalance Int     @default(0)
+  pointBalance  Int     @default(0)
+  isClipper     Boolean @default(false)
+  isBrand       Boolean @default(false)
+  isAdmin       Boolean @default(false)
+  // Jalur masuk pertama (intent onboarding) — penentu dashboard default.
+  primaryRole   String  @default("tool") // tool | brand | clipper
+
+  projects      Project[]
+  refreshTokens RefreshToken[]
+  subscriptions Subscription[]
+
+  // Sprint 2 relations
+  clipperProfile     ClipperProfile?
+  campaigns          Campaign[] // sebagai brand
+  campaignClippers   CampaignClipper[] // sebagai clipper
+  transactions       Transaction[]
+  withdrawalRequests WithdrawalRequest[]
+
+  @@index([email])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+model Project {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  sourceType String // "youtube" | "upload"
+  sourceUrl  String?
+  filePath   String?
+  duration   Int? // total seconds
+  hue        Int      @default(0)
+  status     String   @default("queued") // queued | processing | ready | failed
+  progress   Int      @default(0)
+  stage      String? // current processing stage
+  errorMsg   String?
+  settings   Json? // { clipLength, language, autoCaptions, autoReframe, viralityAnalysis }
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clips Clip[]
+  jobs  Job[]
+
+  // Sprint 2 — back-relation untuk Campaign.project (tidak mengubah runtime/endpoint)
+  campaigns Campaign[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Clip {
+  id             String   @id @default(cuid())
+  projectId      String
+  title          String
+  start          Float // seconds from original video
+  end            Float
+  duration       Float // end - start
+  hue            Int      @default(0)
+  viralityScore  Int      @default(0) // 0-100
+  viralityReason String?
+  aspectRatio    String   @default("9:16")
+  hasCaptions    Boolean  @default(true)
+  transcript     String? // full segment text
+  hashtags       String[]
+  filePath       String? // path to rendered clip file
+  fileSize       Int? // bytes
+  downloadCount  Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([viralityScore(sort: Desc)])
+}
+
+model Job {
+  id        String   @id @default(cuid())
+  projectId String
+  type      String // download | transcribe | analyze | clip | reframe | caption
+  status    String   @default("pending") // pending | running | done | failed
+  attempt   Int      @default(0)
+  error     String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model Subscription {
+  id          String    @id @default(cuid())
+  userId      String
+  planId      String
+  status      String    @default("active") // active | cancelled | expired
+  method      String? // gopay | bca_va | qris | credit_card | ...
+  midtransId  String?   @unique
+  orderId     String?   @unique
+  amount      Int? // IDR
+  startedAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================
+// Sprint 2 — AI Campaign Engine
+// ============================================================
+
+model ClipperProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  niches          String[] @default([])
+  // contoh niche: bisnis, edukasi, gaming, kuliner, motivasi,
+  //               teknologi, hiburan, kesehatan, travel, lifestyle
+  region          String?  @db.VarChar(100)
+  language        String   @default("id") @db.VarChar(50)
+  avgViews        Int      @default(0)
+  avgCtr          Decimal  @default(0) @db.Decimal(5, 2)
+  score           Int      @default(50) // 0-100, dihitung otomatis
+  bio             String?
+  socialTiktok    String?  @db.VarChar(255)
+  socialYoutube   String?  @db.VarChar(255)
+  socialInstagram String?  @db.VarChar(255)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  brandId         String
+  name            String   @db.VarChar(255)
+  videoUrl        String? // YouTube URL yang diinput brand
+  projectId       String? // link ke pipeline project yang diproses
+  viralScore      Int? // 0-100, rule-based
+  detectedNiches  String[] @default([])
+  targetPlatforms String[] @default([]) // tiktok | shorts | reels
+  deadline        DateTime
+  packageType     String   @db.VarChar(20) // starter | growth | pro
+  totalCredits    Int
+  rewardPool      Int // 70% dari nilai paket
+  platformFee     Int // 30% dari nilai paket
+  maxClippers     Int
+  status          String   @default("draft") @db.VarChar(30)
+  // status flow: draft -> processing -> ready_review -> active -> completed -> expired
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  brand    User              @relation(fields: [brandId], references: [id])
+  project  Project?          @relation(fields: [projectId], references: [id])
+  clippers CampaignClipper[]
+
+  @@index([brandId])
+  @@index([status])
+}
+
+model CampaignClipper {
+  id               String    @id @default(cuid())
+  campaignId       String
+  clipperId        String
+  status           String    @default("invited") @db.VarChar(30)
+  // status flow: invited -> accepted -> declined -> submitted -> verified -> rewarded
+  submittedUrl     String?
+  submittedAt      DateTime?
+  verifiedAt       DateTime?
+  baseReward       Int       @default(0)
+  performanceBonus Int       @default(0)
+  totalReward      Int       @default(0)
+  viewCount        Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  clipper  User     @relation(fields: [clipperId], references: [id])
+
+  @@unique([campaignId, clipperId])
+  @@index([campaignId])
+  @@index([clipperId])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   @db.VarChar(40)
+  // type: credit_purchase | campaign_debit | reward_earn | bonus_earn |
+  //       point_withdraw_request | point_withdraw_done
+  amount      Int // positif = masuk, negatif = keluar
+  balanceType String   @db.VarChar(10) // credit | point
+  description String?
+  referenceId String? // campaign_id atau campaign_clipper_id tergantung konteks
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model WithdrawalRequest {
+  id            String    @id @default(cuid())
+  userId        String
+  amount        Int // dalam poin (1 poin = Rp1)
+  bankName      String?   @db.VarChar(100)
+  accountNumber String?   @db.VarChar(50)
+  accountName   String?   @db.VarChar(100)
+  ewalletType   String?   @db.VarChar(50) // gopay | ovo | dana | shopee
+  ewalletNumber String?   @db.VarChar(50)
+  status        String    @default("pending") @db.VarChar(20)
+  // status flow: pending -> approved -> rejected -> processed
+  adminNote     String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
