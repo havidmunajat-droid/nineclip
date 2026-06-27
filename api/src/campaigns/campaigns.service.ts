@@ -11,6 +11,7 @@ import { Campaign } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ProjectsService } from '@/projects/projects.service';
 import { LifecycleService } from '@/lifecycle/lifecycle.service';
+import { AppConfigService } from '@/app-config/app-config.service';
 import { CampaignMatchingService } from './campaign-matching.service';
 import { CAMPAIGN_PACKAGES, PackageType, computeFundAllocation } from './campaign-packages';
 import { calculateViralScore } from './viral-score';
@@ -35,6 +36,7 @@ export class CampaignsService {
     private projects: ProjectsService,
     private matching: CampaignMatchingService,
     private lifecycle: LifecycleService,
+    private appConfig: AppConfigService,
   ) {}
 
   // ── Section 8 — kompensasi KPI tidak tercapai (brand pilih) ─────────────────
@@ -72,7 +74,7 @@ export class CampaignsService {
 
   // ── Section 4.2 — Campaign CRUD (Brand) ─────────────────────────────────
   async create(brandId: string, dto: CreateCampaignDto): Promise<Campaign> {
-    const pkg = CAMPAIGN_PACKAGES[dto.packageType as PackageType];
+    const pkg = await this.appConfig.getPackage(dto.packageType);
     if (!pkg) throw new BadRequestException('Paket tidak valid');
 
     const deadline = new Date(dto.deadline);
@@ -82,9 +84,6 @@ export class CampaignsService {
 
     // Viral score dihitung server-side (authoritative), tidak percaya nilai dari client.
     const { score, niches } = await this.computeViralScore({ videoUrl: dto.videoUrl });
-
-    // Alokasi dana v2 (fee 20%, pool 80% = base 60% + bonus 40%).
-    const fund = computeFundAllocation(pkg.priceIdr, pkg.credits);
 
     const campaign = await this.prisma.campaign.create({
       data: {
@@ -97,17 +96,15 @@ export class CampaignsService {
         deadline,
         packageType: dto.packageType,
         totalCredits: pkg.credits,
-        maxClippers: pkg.clipperInvited,
+        maxClippers: pkg.maxClippers,
         kpiViews: pkg.kpiViews,
-        platformFee: fund.platformFee,
-        rewardPool: fund.clipperPool, // 80% clipper pool (kompat field lama)
-        baseFund: fund.baseFund,
-        bonusPool: fund.bonusPool,
-        bonusPoolRemaining: fund.bonusPool, // awal = bonus pool penuh, mutable saat roll-over
-        rewardPerVideo: fund.rewardPerVideo,
+        platformFee: pkg.platformFee,
+        rewardPool: pkg.clipperPool,
+        baseFund: pkg.baseFund,
+        bonusPool: pkg.bonusPool,
+        bonusPoolRemaining: pkg.bonusPool,
+        rewardPerVideo: pkg.rewardPerVideo,
         status: 'draft',
-        // creditsRemaining & activatedAt di-set saat campaign benar-benar aktif
-        // (setelah pipeline ready), bukan di draft.
       },
     });
 
@@ -147,19 +144,18 @@ export class CampaignsService {
       data.deadline = deadline;
     }
     if (dto.packageType !== undefined) {
-      const pkg = CAMPAIGN_PACKAGES[dto.packageType as PackageType];
+      const pkg = await this.appConfig.getPackage(dto.packageType);
       if (!pkg) throw new BadRequestException('Paket tidak valid');
-      const fund = computeFundAllocation(pkg.priceIdr, pkg.credits);
       data.packageType = dto.packageType;
       data.totalCredits = pkg.credits;
-      data.maxClippers = pkg.clipperInvited;
+      data.maxClippers = pkg.maxClippers;
       data.kpiViews = pkg.kpiViews;
-      data.platformFee = fund.platformFee;
-      data.rewardPool = fund.clipperPool;
-      data.baseFund = fund.baseFund;
-      data.bonusPool = fund.bonusPool;
-      data.bonusPoolRemaining = fund.bonusPool;
-      data.rewardPerVideo = fund.rewardPerVideo;
+      data.platformFee = pkg.platformFee;
+      data.rewardPool = pkg.clipperPool;
+      data.baseFund = pkg.baseFund;
+      data.bonusPool = pkg.bonusPool;
+      data.bonusPoolRemaining = pkg.bonusPool;
+      data.rewardPerVideo = pkg.rewardPerVideo;
     }
 
     return this.prisma.campaign.update({ where: { id }, data });

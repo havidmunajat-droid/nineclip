@@ -16,6 +16,7 @@ import type {
   AdminManualVerification,
   AdminUser,
   AdminWithdrawal,
+  AppConfig,
   Campaign,
   CampaignClipper,
   CampaignStatus,
@@ -26,6 +27,7 @@ import type {
   ClipperProfile,
   CurrentUser,
   Invoice,
+  PackageConfigItem,
   PackageType,
   Project,
   ProcessingStage,
@@ -738,6 +740,33 @@ export async function adminUpdateUser(
   roles: { isAdmin?: boolean; isClipper?: boolean; isBrand?: boolean },
 ): Promise<void> {
   await apiFetch(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(roles) });
+}
+
+// ── App Config (admin-configurable pricing) ──────────────────────────────────
+
+export async function getPublicPackages(): Promise<PackageConfigItem[]> {
+  return apiFetch<PackageConfigItem[]>("/config/packages");
+}
+
+export async function adminGetConfig(): Promise<AppConfig> {
+  return apiFetch<AppConfig>("/admin/config");
+}
+
+export async function adminUpdatePackage(
+  packageType: string,
+  data: Partial<Omit<PackageConfigItem, "id" | "packageType" | "feePct" | "platformFee" | "clipperPool" | "baseFund" | "bonusPool" | "rewardPerVideo">>,
+): Promise<PackageConfigItem[]> {
+  return apiFetch<PackageConfigItem[]>(`/admin/config/packages/${packageType}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function adminUpdatePlatform(feePct: number): Promise<PackageConfigItem[]> {
+  return apiFetch<PackageConfigItem[]>("/admin/config/platform", {
+    method: "PATCH",
+    body: JSON.stringify({ feePct }),
+  });
 }
 
 /** Unduh aset klip (POST + Bearer → blob → trigger download di browser). */

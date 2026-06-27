@@ -16,6 +16,7 @@ import { SocialModule } from './social/social.module';
 import { ClipsModule } from './clips/clips.module';
 import { JobsModule } from './jobs/jobs.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { AppConfigModule } from './app-config/app-config.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -66,6 +67,7 @@ import { HealthController } from './health/health.controller';
     ClipsModule,
     JobsModule,
     SubscriptionsModule,
+    AppConfigModule,
   ],
   controllers: [HealthController],
 })

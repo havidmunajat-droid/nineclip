@@ -350,6 +350,29 @@ model WithdrawalRequest {
   @@index([status])
 }
 
+// ── Admin-configurable pricing ───────────────────────────────────────────────
+// Admin bisa ubah harga/paket dari /admin/config tanpa deploy ulang.
+
+model PackageConfig {
+  id           String   @id @default(cuid())
+  packageType  String   @unique @db.VarChar(20) // starter | growth | pro | ultra
+  name         String   @db.VarChar(60)
+  priceIdr     Int
+  credits      Int // slot video (hard cap)
+  maxClippers  Int // clipper diundang
+  kpiViews     Int
+  campaignDays Int
+  tagline      String   @db.VarChar(120)
+  highlighted  Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+}
+
+model PlatformConfig {
+  id        String   @id @default("singleton")
+  feePct    Int      @default(20) // % fee platform (default 20%)
+  updatedAt DateTime @updatedAt
+}
+
 // v2 — Voucher kompensasi (Section 8 BUSINESS_LOGIC_v2, Opsi B KPI-missed)
 model Voucher {
   id              String    @id @default(cuid())

@@ -280,6 +280,33 @@ export interface WalletData {
   transactions: WalletTransaction[];
 }
 
+// ── App Config (admin-configurable pricing) ─────────────────────────────────
+
+export interface PackageConfigItem {
+  id: string;
+  packageType: string;
+  name: string;
+  priceIdr: number;
+  credits: number;
+  maxClippers: number;
+  kpiViews: number;
+  campaignDays: number;
+  tagline: string;
+  highlighted: boolean;
+  // computed
+  feePct: number;
+  platformFee: number;
+  clipperPool: number;
+  baseFund: number;
+  bonusPool: number;
+  rewardPerVideo: number;
+}
+
+export interface AppConfig {
+  packages: PackageConfigItem[];
+  platform: { id: string; feePct: number };
+}
+
 // ── Admin side ──────────────────────────────────────────────────────────────
 
 export interface AdminCampaign {

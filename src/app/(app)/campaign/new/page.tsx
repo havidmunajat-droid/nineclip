@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -20,15 +20,11 @@ import {
   computeViralScore,
   createCampaign,
   devConfirmPayCampaign,
+  getPublicPackages,
   ApiError,
 } from "@/lib/api";
-import {
-  PACKAGES,
-  estRewardPerClipper,
-  formatIdr,
-  packageById,
-} from "@/lib/campaign-packages";
-import type { PackageType, ViralScoreResult } from "@/lib/types";
+import { PACKAGES, formatIdr } from "@/lib/campaign-packages";
+import type { PackageConfigItem, PackageType, ViralScoreResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const PLATFORMS = [
@@ -54,13 +50,38 @@ export default function CampaignWizardPage() {
   const [platforms, setPlatforms] = useState<string[]>(["tiktok"]);
   const [deadline, setDeadline] = useState("");
 
-  // Step 3 — default growth
+  // Step 3 — packages dari API (fallback ke hardcoded)
+  const [packages, setPackages] = useState<PackageConfigItem[]>([]);
   const [pkg, setPkg] = useState<PackageType>("growth");
 
   // Step 4
   const [submitting, setSubmitting] = useState(false);
 
   const minDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+  // Fetch live packages dari API, fallback ke PACKAGES hardcoded jika gagal
+  useEffect(() => {
+    getPublicPackages()
+      .then(setPackages)
+      .catch(() => setPackages(PACKAGES.map((p) => ({
+        id: p.id,
+        packageType: p.id,
+        name: p.name,
+        priceIdr: p.priceIdr,
+        credits: p.credits,
+        maxClippers: p.maxClippers,
+        kpiViews: p.kpiViews,
+        campaignDays: p.campaignDays,
+        tagline: p.tagline,
+        highlighted: p.highlighted ?? false,
+        feePct: 20,
+        platformFee: p.platformFee,
+        clipperPool: p.rewardPool,
+        baseFund: p.baseFund,
+        bonusPool: p.bonusPool,
+        rewardPerVideo: p.rewardPerVideo,
+      }))));
+  }, []);
 
   async function runViralScore() {
     if (!videoUrl.trim() || scoring) return;
@@ -116,7 +137,7 @@ export default function CampaignWizardPage() {
     }
   }
 
-  const selected = packageById(pkg);
+  const selected = packages.find((p) => p.packageType === pkg) ?? packages[0];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -261,39 +282,45 @@ export default function CampaignWizardPage() {
         {step === 2 && (
           <div>
             <h2 className="font-display font-semibold">3 · Pilih paket</h2>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {PACKAGES.map((p) => {
-                const active = pkg === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setPkg(p.id)}
-                    className={cn(
-                      "relative flex flex-col rounded-xl border p-4 text-left transition-colors",
-                      active
-                        ? "border-lime/60 bg-lime/5 ring-1 ring-lime/40"
-                        : "border-border bg-secondary/30 hover:border-white/20",
-                    )}
-                  >
-                    {p.highlighted && (
-                      <Badge className="absolute -top-2 right-3 text-[10px]">Populer</Badge>
-                    )}
-                    <span className="font-display text-sm font-bold">{p.name}</span>
-                    <span className="mt-1 font-display text-xl font-extrabold text-lime">
-                      {formatIdr(p.priceIdr)}
-                    </span>
-                    <span className="mt-2 text-xs text-muted-foreground">
-                      {p.credits} slot · {p.maxClippers} clipper
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      ~{formatIdr(p.rewardPerVideo)} / video
-                    </span>
-                    <span className="mt-2 text-[11px] text-muted-foreground">{p.tagline}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {packages.length === 0 ? (
+              <div className="mt-4 flex justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-lime" />
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {packages.map((p) => {
+                  const active = pkg === p.packageType;
+                  return (
+                    <button
+                      key={p.packageType}
+                      type="button"
+                      onClick={() => setPkg(p.packageType as PackageType)}
+                      className={cn(
+                        "relative flex flex-col rounded-xl border p-4 text-left transition-colors",
+                        active
+                          ? "border-lime/60 bg-lime/5 ring-1 ring-lime/40"
+                          : "border-border bg-secondary/30 hover:border-white/20",
+                      )}
+                    >
+                      {p.highlighted && (
+                        <Badge className="absolute -top-2 right-3 text-[10px]">Populer</Badge>
+                      )}
+                      <span className="font-display text-sm font-bold">{p.name}</span>
+                      <span className="mt-1 font-display text-xl font-extrabold text-lime">
+                        {formatIdr(p.priceIdr)}
+                      </span>
+                      <span className="mt-2 text-xs text-muted-foreground">
+                        {p.credits} slot · {p.maxClippers} clipper
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        ~{formatIdr(p.rewardPerVideo)} / video
+                      </span>
+                      <span className="mt-2 text-[11px] text-muted-foreground">{p.tagline}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -307,15 +334,15 @@ export default function CampaignWizardPage() {
               <Row label="Niche" value={score?.niches.join(", ") ?? "—"} />
               <Row label="Platform" value={platforms.join(", ")} />
               <Row label="Deadline" value={deadline || "—"} />
-              <Row label="Paket" value={selected.name} />
-              <Row label="Slot video" value={String(selected.credits)} />
-              <Row label="Maks clipper" value={String(selected.maxClippers)} />
-              <Row label="Reward pool" value={formatIdr(selected.rewardPool)} />
-              <Row label="Reward / video" value={formatIdr(selected.rewardPerVideo)} />
+              <Row label="Paket" value={selected?.name ?? "—"} />
+              <Row label="Slot video" value={String(selected?.credits ?? "—")} />
+              <Row label="Maks clipper" value={String(selected?.maxClippers ?? "—")} />
+              <Row label="Reward pool" value={selected ? formatIdr(selected.clipperPool) : "—"} />
+              <Row label="Reward / video" value={selected ? formatIdr(selected.rewardPerVideo) : "—"} />
               <div className="flex items-center justify-between border-t border-border pt-3">
                 <dt className="font-medium">Total bayar</dt>
                 <dd className="font-display text-xl font-extrabold text-lime">
-                  {formatIdr(selected.priceIdr)}
+                  {selected ? formatIdr(selected.priceIdr) : "—"}
                 </dd>
               </div>
             </dl>
@@ -354,11 +381,11 @@ export default function CampaignWizardPage() {
             </Button>
           )}
           {step === 3 && (
-            <Button onClick={handlePay} disabled={submitting} size="lg">
+            <Button onClick={handlePay} disabled={submitting || !selected} size="lg">
               {submitting ? (
                 <><Loader2 className="size-4 animate-spin" /> Memproses...</>
               ) : (
-                <><Sparkles className="size-4" /> Bayar {formatIdr(selected.priceIdr)}</>
+                <><Sparkles className="size-4" /> Bayar {selected ? formatIdr(selected.priceIdr) : "—"}</>
               )}
             </Button>
           )}
