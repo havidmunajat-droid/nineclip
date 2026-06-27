@@ -20,6 +20,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { CampaignStatusBadge } from "@/components/app/campaign-status-badge";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { getCampaign, getCampaignClippers, applyCompensation } from "@/lib/api";
 import type { CompensationResult } from "@/lib/api";
 import { formatIdr } from "@/lib/campaign-packages";
@@ -340,6 +349,165 @@ export default function CampaignDetailPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Analytics */}
+      {clippers.length > 0 && (
+        <CampaignAnalytics
+          invited={invited}
+          accepted={accepted}
+          submitted={submitted}
+          verified={verified}
+          clippers={clippers}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Analytics section ──────────────────────────────────────────────────────
+
+function CampaignAnalytics({
+  invited,
+  accepted,
+  submitted,
+  verified,
+  clippers,
+}: {
+  invited: number;
+  accepted: number;
+  submitted: number;
+  verified: number;
+  clippers: CampaignClipper[];
+}) {
+  const funnelSteps = [
+    { label: "Diundang", value: invited, color: "bg-white/20" },
+    { label: "Diterima", value: accepted, color: "bg-lime/30" },
+    { label: "Submit", value: submitted, color: "bg-lime/50" },
+    { label: "Verified", value: verified, color: "bg-lime" },
+  ];
+
+  const viewData = clippers
+    .filter((c) => (c.viewCount ?? 0) > 0)
+    .sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0))
+    .slice(0, 10)
+    .map((c) => ({
+      name: c.clipperName.split(" ")[0],
+      views: c.viewCount ?? 0,
+      reward: c.totalReward,
+    }));
+
+  const convRate = invited > 0 ? Math.round((verified / invited) * 100) : 0;
+  const avgViews =
+    viewData.length > 0
+      ? Math.round(viewData.reduce((n, d) => n + d.views, 0) / viewData.length)
+      : 0;
+  const topViews = viewData[0]?.views ?? 0;
+
+  return (
+    <div className="mt-8">
+      <h2 className="font-display text-lg font-semibold">Analytics</h2>
+
+      {/* Funnel */}
+      <div className="mt-4 rounded-xl border border-border bg-card p-5">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          Funnel konversi
+        </p>
+        <div className="mt-4 space-y-2">
+          {funnelSteps.map((s) => {
+            const pct = invited > 0 ? Math.round((s.value / invited) * 100) : 0;
+            return (
+              <div key={s.label}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{s.label}</span>
+                  <span className="font-semibold">
+                    {s.value}{" "}
+                    <span className="text-muted-foreground">({pct}%)</span>
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                  <div
+                    className={`h-full rounded-full transition-all ${s.color}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-4 border-t border-border pt-4 text-sm">
+          <div>
+            <span className="text-muted-foreground">Conversion rate </span>
+            <span className="font-semibold text-lime">{convRate}%</span>
+          </div>
+          {avgViews > 0 && (
+            <div>
+              <span className="text-muted-foreground">Avg views </span>
+              <span className="font-semibold">{avgViews.toLocaleString("id-ID")}</span>
+            </div>
+          )}
+          {topViews > 0 && (
+            <div>
+              <span className="text-muted-foreground">Top views </span>
+              <span className="font-semibold text-lime">{topViews.toLocaleString("id-ID")}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Views bar chart */}
+      {viewData.length > 0 && (
+        <div className="mt-4 rounded-xl border border-border bg-card p-5">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Views per clipper
+          </p>
+          <div className="mt-4">
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={viewData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <XAxis
+                  dataKey="name"
+                  stroke="hsl(0 0% 40%)"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="hsl(0 0% 40%)"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  width={48}
+                  tickFormatter={(v: number) =>
+                    v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
+                  }
+                />
+                <Tooltip
+                  cursor={{ fill: "hsl(0 0% 100% / 0.04)" }}
+                  contentStyle={{
+                    background: "hsl(0 0% 7%)",
+                    border: "1px solid hsl(0 0% 16%)",
+                    borderRadius: 10,
+                    fontSize: 12,
+                  }}
+                  formatter={(v: number, name: string) => [
+                    name === "views"
+                      ? v.toLocaleString("id-ID")
+                      : formatIdr(v),
+                    name === "views" ? "Views" : "Reward",
+                  ]}
+                />
+                <Bar dataKey="views" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                  {viewData.map((_, i) => (
+                    <Cell
+                      key={i}
+                      fill={i === 0 ? "hsl(74 96% 50%)" : "hsl(74 96% 50% / 0.4)"}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
     </div>
