@@ -53,6 +53,7 @@ export function Sidebar() {
     roleNav.push({ href: "/clipper/earnings", label: "Earnings", icon: Wallet });
   }
   if (user?.isAdmin) {
+    roleNav.push({ href: "/admin", label: "Admin · Overview", icon: Shield });
     roleNav.push({ href: "/admin/withdrawals", label: "Admin · Withdrawal", icon: Shield });
     roleNav.push({ href: "/admin/campaigns", label: "Admin · Campaign", icon: Shield });
     roleNav.push({ href: "/admin/verifications", label: "Admin · Verifikasi", icon: Shield });
@@ -69,9 +70,10 @@ export function Sidebar() {
 
       <nav className="mt-6 flex flex-col gap-1">
         {nav.map((item) => {
+          const exactOnly = item.href === "/dashboard" || item.href === "/admin";
           const active =
             pathname === item.href ||
-            (item.href !== "/dashboard" && pathname.startsWith(item.href));
+            (!exactOnly && pathname.startsWith(item.href));
           const showBadge = item.href === "/clipper/campaigns" && inviteCount > 0;
           return (
             <Link
