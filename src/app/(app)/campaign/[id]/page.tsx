@@ -4,17 +4,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
+  Clock,
   ExternalLink,
   Eye,
   Flame,
   Loader2,
+  RefreshCw,
+  Ticket,
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { CampaignStatusBadge } from "@/components/app/campaign-status-badge";
-import { getCampaign, getCampaignClippers } from "@/lib/api";
+import { getCampaign, getCampaignClippers, applyCompensation } from "@/lib/api";
+import type { CompensationResult } from "@/lib/api";
 import { formatIdr } from "@/lib/campaign-packages";
 import type { Campaign, CampaignClipper } from "@/lib/types";
 
@@ -27,13 +34,47 @@ const CLIPPER_STATUS_LABEL: Record<string, string> = {
   rewarded: "Reward",
 };
 
+function useCountdown(deadline: string | null | undefined) {
+  const [secs, setSecs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!deadline) return;
+    const end = new Date(deadline).getTime();
+    const tick = () => setSecs(Math.max(0, Math.floor((end - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [deadline]);
+  if (secs === null) return null;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return `${h}j ${m.toString().padStart(2, "0")}m ${s.toString().padStart(2, "0")}d`;
+}
+
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [clippers, setClippers] = useState<CampaignClipper[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [compApplying, setCompApplying] = useState(false);
+  const [compResult, setCompResult] = useState<CompensationResult | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const compCountdown = useCountdown(campaign?.compensationDeadline);
+
+  async function handleCompensation(choice: "extension" | "voucher") {
+    if (!campaign) return;
+    setCompApplying(true);
+    try {
+      const result = await applyCompensation(campaign.id, choice);
+      setCompResult(result);
+      const updated = await getCampaign(campaign.id).catch(() => null);
+      if (updated) setCampaign(updated);
+    } finally {
+      setCompApplying(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +179,62 @@ export default function CampaignDetailPage() {
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
           <Loader2 className="size-4 animate-spin" />
           Pipeline sedang memproses video & memilih clipper. Halaman ini update otomatis.
+        </div>
+      )}
+
+      {campaign.status === "kpi_missed" && (
+        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/5 p-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-400" />
+            <div className="flex-1">
+              <h3 className="font-display font-semibold text-red-300">KPI Tidak Tercapai</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Campaign ini belum mencapai target views. Pilih kompensasi yang diinginkan.
+              </p>
+              {compCountdown && !compResult && (
+                <div className="mt-2 flex items-center gap-1.5 text-sm text-amber-400">
+                  <Clock className="size-3.5" />
+                  Sisa waktu: <span className="font-mono font-semibold">{compCountdown}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {compResult ? (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-lime/30 bg-lime/5 px-4 py-3">
+              <CheckCircle2 className="size-5 text-lime" />
+              {compResult.applied === "extension" ? (
+                <span className="text-sm">
+                  Campaign diperpanjang <span className="font-semibold text-lime">{compResult.days} hari</span>. Clipper akan kembali aktif segera.
+                </span>
+              ) : (
+                <span className="text-sm">
+                  Voucher diskon 20% berhasil dibuat:{" "}
+                  <span className="font-mono font-semibold text-lime">{compResult.code}</span>. Berlaku 90 hari untuk campaign berikutnya.
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button
+                onClick={() => handleCompensation("extension")}
+                disabled={compApplying}
+                className="gap-2"
+              >
+                {compApplying ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                Perpanjang Campaign
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => handleCompensation("voucher")}
+                disabled={compApplying}
+                className="gap-2"
+              >
+                <Ticket className="size-4" />
+                Terima Voucher 20%
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

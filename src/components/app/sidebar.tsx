@@ -53,7 +53,9 @@ export function Sidebar() {
   if (user?.isAdmin) {
     roleNav.push({ href: "/admin/withdrawals", label: "Admin · Withdrawal", icon: Shield });
     roleNav.push({ href: "/admin/campaigns", label: "Admin · Campaign", icon: Shield });
+    roleNav.push({ href: "/admin/verifications", label: "Admin · Verifikasi", icon: Shield });
     roleNav.push({ href: "/admin/users", label: "Admin · User", icon: Shield });
+    roleNav.push({ href: "/admin/config", label: "Admin · Konfigurasi", icon: Settings });
   }
   const nav: NavItem[] = [...baseNav, ...roleNav, ...tailNav];
 

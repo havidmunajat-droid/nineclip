@@ -150,6 +150,7 @@ export interface Campaign {
   status: CampaignStatus;
   createdAt: string;
   clippersCount: number;
+  compensationDeadline?: string | null;
 }
 
 export interface CampaignClipper {

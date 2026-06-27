@@ -440,6 +440,7 @@ interface ApiCampaign {
   maxClippers: number;
   status: string;
   createdAt: string;
+  compensationDeadline?: string | null;
   _count?: { clippers: number };
 }
 
@@ -476,6 +477,7 @@ function mapCampaign(c: ApiCampaign): Campaign {
     status: (c.status as CampaignStatus) ?? "draft",
     createdAt: c.createdAt,
     clippersCount: c._count?.clippers ?? 0,
+    compensationDeadline: c.compensationDeadline ?? null,
   };
 }
 
@@ -554,6 +556,22 @@ export async function devConfirmPayCampaign(id: string): Promise<Campaign> {
 export async function getCampaignClippers(id: string): Promise<CampaignClipper[]> {
   const list = await apiFetch<ApiCampaignClipper[]>(`/campaigns/${id}/clippers`);
   return list.map(mapCampaignClipper);
+}
+
+export interface CompensationResult {
+  applied: "extension" | "voucher";
+  days?: number;
+  code?: string;
+}
+
+export async function applyCompensation(
+  id: string,
+  choice: "extension" | "voucher",
+): Promise<CompensationResult> {
+  return apiFetch<CompensationResult>(`/campaigns/${id}/compensation`, {
+    method: "POST",
+    body: JSON.stringify({ choice }),
+  });
 }
 
 // ---------------------------------------------------------------------------
