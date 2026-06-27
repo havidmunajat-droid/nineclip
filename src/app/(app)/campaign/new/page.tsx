@@ -130,7 +130,7 @@ export default function CampaignWizardPage() {
       // MODE SIMULASI (sandbox) — Midtrans Snap popup nyata menyusul (M5).
       // Memicu pembayaran sukses → backend buat project & jalankan pipeline.
       await devConfirmPayCampaign(campaign.id);
-      router.push(`/campaign/${campaign.id}`);
+      router.push(`/campaign/${campaign.id}?paid=1`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Gagal memproses pembayaran.");
       setSubmitting(false);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -53,13 +53,26 @@ function useCountdown(deadline: string | null | undefined) {
 
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [clippers, setClippers] = useState<CampaignClipper[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [compApplying, setCompApplying] = useState(false);
   const [compResult, setCompResult] = useState<CompensationResult | null>(null);
+  const [showPaidBanner, setShowPaidBanner] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Deteksi redirect post-payment dan auto-clear param dari URL
+  useEffect(() => {
+    if (searchParams.get("paid") === "1") {
+      setShowPaidBanner(true);
+      router.replace(`/campaign/${id}`);
+      const t = setTimeout(() => setShowPaidBanner(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [searchParams, router, id]);
 
   const compCountdown = useCountdown(campaign?.compensationDeadline);
 
@@ -174,6 +187,15 @@ export default function CampaignDetailPage() {
           <div className="font-display font-bold capitalize">{campaign.packageType}</div>
         </div>
       </div>
+
+      {showPaidBanner && (
+        <div className="mt-4 flex items-center gap-3 rounded-lg border border-lime/40 bg-lime/10 px-4 py-3 text-sm text-lime animate-in fade-in slide-in-from-top-2 duration-300">
+          <CheckCircle2 className="size-4 shrink-0" />
+          <span>
+            Pembayaran berhasil — pipeline berjalan, clipper akan segera dicocokkan.
+          </span>
+        </div>
+      )}
 
       {campaign.status === "processing" && (
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
