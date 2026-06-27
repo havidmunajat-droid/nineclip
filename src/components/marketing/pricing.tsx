@@ -3,13 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
-import { plans, formatIDR } from "@/lib/mock";
+import { formatIDR } from "@/lib/mock";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import type { Plan } from "@/lib/types";
 
-export function Pricing() {
+interface PricingProps {
+  plans?: Plan[];
+}
+
+export function Pricing({ plans: propPlans }: PricingProps = {}) {
   const [yearly, setYearly] = useState(false);
+  const plans = propPlans ?? [];
 
   return (
     <div>

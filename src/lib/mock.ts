@@ -4,8 +4,23 @@ import type {
   EngagementPoint,
   Invoice,
   Plan,
+  PlanConfigItem,
   Project,
 } from "./types";
+
+/** Konversi PlanConfigItem (dari API) ke Plan (format lama untuk komponen billing/pricing). */
+export function planConfigToLegacy(p: PlanConfigItem): Plan {
+  return {
+    id: p.planId,
+    name: p.name,
+    tagline: p.tagline,
+    priceMonthly: p.priceMonthly,
+    priceYearly: p.priceYearly,
+    minutesPerMonth: p.minutesPerMonth,
+    features: p.features,
+    highlighted: p.highlighted,
+  };
+}
 
 /** Indonesian Rupiah formatter. */
 export function formatIDR(amount: number): string {

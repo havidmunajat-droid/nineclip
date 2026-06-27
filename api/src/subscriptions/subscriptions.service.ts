@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/prisma/prisma.service';
-import { PLANS } from '@/users/users.service';
+import { AppConfigService } from '@/app-config/app-config.service';
 import axios from 'axios';
 
 interface MidtransChargeResponse {
@@ -25,15 +25,16 @@ export class SubscriptionsService {
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
+    private appConfig: AppConfigService,
   ) {}
 
   async createSnapToken(userId: string, planId: string, billingCycle: 'monthly' | 'yearly') {
-    const plan = PLANS[planId];
+    const plan = await this.appConfig.getPlan(planId);
     if (!plan || planId === 'free') throw new BadRequestException('Paket tidak valid');
 
     const amount =
       billingCycle === 'yearly'
-        ? Math.round(plan.priceMonthly * 12 * 0.8) // 20% disc yearly
+        ? plan.priceYearly || Math.round(plan.priceMonthly * 12 * 0.8)
         : plan.priceMonthly;
 
     const orderId = `nineclip-${userId}-${planId}-${Date.now()}`;

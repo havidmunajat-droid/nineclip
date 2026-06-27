@@ -302,9 +302,22 @@ export interface PackageConfigItem {
   rewardPerVideo: number;
 }
 
+export interface PlanConfigItem {
+  id: string;
+  planId: string;
+  name: string;
+  tagline: string;
+  priceMonthly: number;
+  priceYearly: number;
+  minutesPerMonth: number;
+  features: string[];
+  highlighted: boolean;
+}
+
 export interface AppConfig {
   packages: PackageConfigItem[];
   platform: { id: string; feePct: number };
+  plans: PlanConfigItem[];
 }
 
 // ── Admin side ──────────────────────────────────────────────────────────────

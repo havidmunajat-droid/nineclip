@@ -9,41 +9,39 @@ import { AdminOnly } from "@/components/app/admin-only";
 import {
   adminGetConfig,
   adminUpdatePackage,
+  adminUpdatePlan,
   adminUpdatePlatform,
   ApiError,
 } from "@/lib/api";
 import { formatIdr } from "@/lib/campaign-packages";
-import type { AppConfig, PackageConfigItem } from "@/lib/types";
+import { formatIDR } from "@/lib/mock";
+import type { AppConfig, PackageConfigItem, PlanConfigItem } from "@/lib/types";
 
-// Form state untuk satu paket
 interface PkgForm {
-  name: string;
-  priceIdr: string;
-  credits: string;
-  maxClippers: string;
-  kpiViews: string;
-  campaignDays: string;
-  tagline: string;
-  highlighted: boolean;
+  name: string; priceIdr: string; credits: string; maxClippers: string;
+  kpiViews: string; campaignDays: string; tagline: string; highlighted: boolean;
+}
+function toPkgForm(p: PackageConfigItem): PkgForm {
+  return { name: p.name, priceIdr: String(p.priceIdr), credits: String(p.credits),
+    maxClippers: String(p.maxClippers), kpiViews: String(p.kpiViews),
+    campaignDays: String(p.campaignDays), tagline: p.tagline, highlighted: p.highlighted };
 }
 
-function toPkgForm(p: PackageConfigItem): PkgForm {
-  return {
-    name: p.name,
-    priceIdr: String(p.priceIdr),
-    credits: String(p.credits),
-    maxClippers: String(p.maxClippers),
-    kpiViews: String(p.kpiViews),
-    campaignDays: String(p.campaignDays),
-    tagline: p.tagline,
-    highlighted: p.highlighted,
-  };
+interface PlanForm {
+  name: string; tagline: string; priceMonthly: string; priceYearly: string;
+  minutesPerMonth: string; features: string; highlighted: boolean;
+}
+function toPlanForm(p: PlanConfigItem): PlanForm {
+  return { name: p.name, tagline: p.tagline, priceMonthly: String(p.priceMonthly),
+    priceYearly: String(p.priceYearly), minutesPerMonth: String(p.minutesPerMonth),
+    features: p.features.join("\n"), highlighted: p.highlighted };
 }
 
 function ConfigInner() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [pkgForms, setPkgForms] = useState<Record<string, PkgForm>>({});
+  const [planForms, setPlanForms] = useState<Record<string, PlanForm>>({});
   const [feePct, setFeePct] = useState("20");
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +53,12 @@ function ConfigInner() {
       const cfg = await adminGetConfig();
       setConfig(cfg);
       setFeePct(String(cfg.platform.feePct));
-      const forms: Record<string, PkgForm> = {};
-      cfg.packages.forEach((p) => { forms[p.packageType] = toPkgForm(p); });
-      setPkgForms(forms);
+      const pForms: Record<string, PkgForm> = {};
+      cfg.packages.forEach((p) => { pForms[p.packageType] = toPkgForm(p); });
+      setPkgForms(pForms);
+      const lForms: Record<string, PlanForm> = {};
+      cfg.plans.forEach((p) => { lForms[p.planId] = toPlanForm(p); });
+      setPlanForms(lForms);
     } catch {
       setError("Gagal memuat konfigurasi.");
     } finally {
@@ -69,6 +70,9 @@ function ConfigInner() {
 
   function setField<K extends keyof PkgForm>(type: string, key: K, val: PkgForm[K]) {
     setPkgForms((prev) => ({ ...prev, [type]: { ...prev[type]!, [key]: val } }));
+  }
+  function setPlanField<K extends keyof PlanForm>(planId: string, key: K, val: PlanForm[K]) {
+    setPlanForms((prev) => ({ ...prev, [planId]: { ...prev[planId]!, [key]: val } }));
   }
 
   async function savePackage(packageType: string) {
@@ -89,6 +93,31 @@ function ConfigInner() {
       });
       setConfig((prev) => prev ? { ...prev, packages: updated } : prev);
       setSaved(packageType);
+      setTimeout(() => setSaved(null), 2000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Gagal menyimpan.");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function savePlan(planId: string) {
+    const f = planForms[planId];
+    if (!f) return;
+    setSaving(`plan-${planId}`);
+    setError(null);
+    try {
+      const updated = await adminUpdatePlan(planId, {
+        name: f.name,
+        tagline: f.tagline,
+        priceMonthly: parseInt(f.priceMonthly, 10),
+        priceYearly: parseInt(f.priceYearly, 10),
+        minutesPerMonth: parseInt(f.minutesPerMonth, 10),
+        features: f.features.split("\n").map((s) => s.trim()).filter(Boolean),
+        highlighted: f.highlighted,
+      });
+      setConfig((prev) => prev ? { ...prev, plans: updated } : prev);
+      setSaved(`plan-${planId}`);
       setTimeout(() => setSaved(null), 2000);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Gagal menyimpan.");
@@ -265,6 +294,79 @@ function ConfigInner() {
               >
                 {isSaving ? <Loader2 className="size-4 animate-spin" /> :
                  isSaved ? "✓ Tersimpan" : <><Save className="size-4" /> Simpan perubahan</>}
+              </Button>
+            </section>
+          );
+        })}
+      </div>
+      {/* Subscription Plans */}
+      <h2 className="mt-10 font-display text-lg font-semibold">Subscription Plan (Menit)</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Atur kuota menit, harga bulanan/tahunan, dan fitur per plan.
+      </p>
+      <div className="mt-4 grid gap-6 lg:grid-cols-3">
+        {config?.plans.map((p) => {
+          const f = planForms[p.planId];
+          if (!f) return null;
+          const isSaving = saving === `plan-${p.planId}`;
+          const isSaved = saved === `plan-${p.planId}`;
+          return (
+            <section key={p.planId} className="rounded-xl border border-border bg-card p-6">
+              <div className="flex items-center gap-2">
+                <h3 className="font-display font-semibold">{p.name}</h3>
+                <Badge variant="muted" className="capitalize">{p.planId}</Badge>
+              </div>
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Nama plan</label>
+                  <Input value={f.name} onChange={(e) => setPlanField(p.planId, "name", e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Tagline</label>
+                  <Input value={f.tagline} onChange={(e) => setPlanField(p.planId, "tagline", e.target.value)} className="mt-1" maxLength={120} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground">Harga/bulan (Rp)</label>
+                    <Input type="number" min="0" value={f.priceMonthly} onChange={(e) => setPlanField(p.planId, "priceMonthly", e.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">Harga/tahun (Rp)</label>
+                    <Input type="number" min="0" value={f.priceYearly} onChange={(e) => setPlanField(p.planId, "priceYearly", e.target.value)} className="mt-1" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Kuota menit / bulan</label>
+                  <Input type="number" min="1" value={f.minutesPerMonth} onChange={(e) => setPlanField(p.planId, "minutesPerMonth", e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Fitur (satu per baris)</label>
+                  <textarea
+                    value={f.features}
+                    onChange={(e) => setPlanField(p.planId, "features", e.target.value)}
+                    rows={4}
+                    className="mt-1 w-full rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-lime"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    id={`hl-plan-${p.planId}`}
+                    type="checkbox"
+                    checked={f.highlighted}
+                    onChange={(e) => setPlanField(p.planId, "highlighted", e.target.checked)}
+                    className="size-4 accent-lime"
+                  />
+                  <label htmlFor={`hl-plan-${p.planId}`} className="text-sm">Tandai sebagai paling populer</label>
+                </div>
+                <div className="rounded-lg border border-lime/20 bg-lime/5 p-2 text-xs text-muted-foreground">
+                  Preview: <span className="text-foreground font-medium">{parseInt(f.minutesPerMonth, 10) || 0} menit/bln</span>
+                  {" · "}{parseInt(f.priceMonthly, 10) === 0 ? "Gratis" : formatIDR(parseInt(f.priceMonthly, 10) || 0)}/bln
+                  {" · "}{formatIDR(parseInt(f.priceYearly, 10) || 0)}/thn
+                </div>
+              </div>
+              <Button className="mt-4 w-full" size="sm" onClick={() => savePlan(p.planId)} disabled={saving !== null}>
+                {isSaving ? <Loader2 className="size-4 animate-spin" /> :
+                 isSaved ? "✓ Tersimpan" : <><Save className="size-4" /> Simpan</>}
               </Button>
             </section>
           );

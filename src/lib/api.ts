@@ -29,6 +29,7 @@ import type {
   Invoice,
   PackageConfigItem,
   PackageType,
+  PlanConfigItem,
   Project,
   ProcessingStage,
   ProjectStatus,
@@ -766,6 +767,20 @@ export async function adminUpdatePlatform(feePct: number): Promise<PackageConfig
   return apiFetch<PackageConfigItem[]>("/admin/config/platform", {
     method: "PATCH",
     body: JSON.stringify({ feePct }),
+  });
+}
+
+export async function getPublicPlans(): Promise<PlanConfigItem[]> {
+  return apiFetch<PlanConfigItem[]>("/config/plans");
+}
+
+export async function adminUpdatePlan(
+  planId: string,
+  data: Partial<Omit<PlanConfigItem, "id" | "planId">>,
+): Promise<PlanConfigItem[]> {
+  return apiFetch<PlanConfigItem[]>(`/admin/config/plans/${planId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
   });
 }
 

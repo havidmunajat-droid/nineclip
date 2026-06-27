@@ -1,6 +1,24 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { UpdatePackageConfigDto, UpdatePlatformConfigDto } from './dto/app-config.dto';
+import { UpdatePackageConfigDto, UpdatePlanConfigDto, UpdatePlatformConfigDto } from './dto/app-config.dto';
+
+const DEFAULT_PLANS = [
+  {
+    planId: 'free', name: 'Free', tagline: 'Coba potong video pertamamu.',
+    priceMonthly: 0, priceYearly: 0, minutesPerMonth: 30, highlighted: false,
+    features: ['30 menit upload / bulan', 'Klip 9:16 vertikal', 'Auto-caption dasar', 'Watermark nineClip', 'Ekspor 720p'],
+  },
+  {
+    planId: 'creator', name: 'Creator', tagline: 'Untuk kreator yang posting rutin.',
+    priceMonthly: 149_000, priceYearly: 1_490_000, minutesPerMonth: 300, highlighted: true,
+    features: ['300 menit upload / bulan', 'Tanpa watermark', 'Skor viralitas + alasan AI', 'Auto-reframe wajah', 'Judul & hashtag otomatis', 'Ekspor 1080p'],
+  },
+  {
+    planId: 'pro', name: 'Pro', tagline: 'Untuk agensi & tim konten.',
+    priceMonthly: 399_000, priceYearly: 3_990_000, minutesPerMonth: 1200, highlighted: false,
+    features: ['1.200 menit upload / bulan', 'Semua fitur Creator', 'Brand kit & template caption', 'Prioritas antrian proses', 'Ekspor 4K', 'Akses API (beta)'],
+  },
+];
 
 // Nilai default dipakai untuk seed satu kali saja saat tabel kosong.
 const DEFAULT_PACKAGES = [
@@ -9,6 +27,18 @@ const DEFAULT_PACKAGES = [
   { packageType: 'pro',     name: 'Pro Surge',     priceIdr: 3_999_000, credits: 280, maxClippers: 150, kpiViews: 600_000, campaignDays: 14, tagline: 'Distribusi masif, 14 hari kampanye.', highlighted: false },
   { packageType: 'ultra',   name: 'Ultra Scale',   priceIdr: 6_999_000, credits: 500, maxClippers: 260, kpiViews: 1_000_000, campaignDays: 14, tagline: 'Jutaan views, skala enterprise.', highlighted: false },
 ];
+
+export interface PlanConfigItem {
+  id: string;
+  planId: string;
+  name: string;
+  tagline: string;
+  priceMonthly: number;
+  priceYearly: number;
+  minutesPerMonth: number;
+  features: string[];
+  highlighted: boolean;
+}
 
 export interface ComputedPackage {
   id: string;
@@ -35,9 +65,14 @@ export class AppConfigService implements OnModuleInit {
   constructor(private prisma: PrismaService) {}
 
   async onModuleInit() {
+    // Seed plan config jika tabel kosong (idempoten).
+    const planCount = await this.prisma.planConfig.count();
+    if (planCount === 0) {
+      await this.prisma.planConfig.createMany({ data: DEFAULT_PLANS });
+    }
     // Seed paket default jika tabel kosong (idempoten).
-    const count = await this.prisma.packageConfig.count();
-    if (count === 0) {
+    const pkgCount = await this.prisma.packageConfig.count();
+    if (pkgCount === 0) {
       await this.prisma.packageConfig.createMany({ data: DEFAULT_PACKAGES });
     }
     // Seed platform config jika belum ada.
@@ -79,6 +114,23 @@ export class AppConfigService implements OnModuleInit {
   async updatePlatformConfig(dto: UpdatePlatformConfigDto): Promise<ComputedPackage[]> {
     await this.prisma.platformConfig.update({ where: { id: 'singleton' }, data: { feePct: dto.feePct } });
     return this.getPackages();
+  }
+
+  // ── Subscription plans ───────────────────────────────────────────────────────
+
+  async getPlans(): Promise<PlanConfigItem[]> {
+    return this.prisma.planConfig.findMany({ orderBy: { priceMonthly: 'asc' } });
+  }
+
+  async getPlan(planId: string): Promise<PlanConfigItem | null> {
+    return this.prisma.planConfig.findUnique({ where: { planId } });
+  }
+
+  async updatePlan(planId: string, dto: UpdatePlanConfigDto): Promise<PlanConfigItem[]> {
+    const exists = await this.prisma.planConfig.findUnique({ where: { planId } });
+    if (!exists) throw new NotFoundException(`Plan '${planId}' tidak ditemukan`);
+    await this.prisma.planConfig.update({ where: { planId }, data: dto });
+    return this.getPlans();
   }
 
   private compute(

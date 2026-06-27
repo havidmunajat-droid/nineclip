@@ -353,6 +353,19 @@ model WithdrawalRequest {
 // ── Admin-configurable pricing ───────────────────────────────────────────────
 // Admin bisa ubah harga/paket dari /admin/config tanpa deploy ulang.
 
+model PlanConfig {
+  id              String   @id @default(cuid())
+  planId          String   @unique @db.VarChar(20) // free | creator | pro
+  name            String   @db.VarChar(60)
+  tagline         String   @db.VarChar(120)
+  priceMonthly    Int
+  priceYearly     Int
+  minutesPerMonth Int
+  features        String[]
+  highlighted     Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+}
+
 model PackageConfig {
   id           String   @id @default(cuid())
   packageType  String   @unique @db.VarChar(20) // starter | growth | pro | ultra

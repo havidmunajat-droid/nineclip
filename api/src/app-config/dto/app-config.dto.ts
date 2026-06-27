@@ -55,3 +55,38 @@ export class UpdatePlatformConfigDto {
   @Max(50)
   feePct: number;
 }
+
+export class UpdatePlanConfigDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  tagline?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priceMonthly?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priceYearly?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minutesPerMonth?: number;
+
+  @IsOptional()
+  @IsString({ each: true })
+  features?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  highlighted?: boolean;
+}

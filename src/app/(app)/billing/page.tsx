@@ -5,10 +5,10 @@ import { CheckCircle2, CreditCard, Download, Loader2, Sparkles } from "lucide-re
 import { Pricing } from "@/components/marketing/pricing";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { plans, formatIDR } from "@/lib/mock";
-import { getInvoices } from "@/lib/api";
+import { planConfigToLegacy, formatIDR } from "@/lib/mock";
+import { getInvoices, getPublicPlans } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Invoice } from "@/lib/types";
+import type { Invoice, Plan } from "@/lib/types";
 
 const statusVariant = {
   paid: "success",
@@ -19,16 +19,20 @@ const statusVariant = {
 export default function BillingPage() {
   const { user } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getInvoices()
-      .then(setInvoices)
-      .catch(() => setInvoices([]))
-      .finally(() => setLoading(false));
+    Promise.all([
+      getInvoices().catch(() => [] as Invoice[]),
+      getPublicPlans().catch(() => []),
+    ]).then(([inv, raw]) => {
+      setInvoices(inv);
+      setPlans(raw.map(planConfigToLegacy));
+    }).finally(() => setLoading(false));
   }, []);
 
-  const plan = plans.find((p) => p.id === (user?.planId ?? "free")) ?? plans[0]!;
+  const plan = plans.find((p) => p.id === (user?.planId ?? "free")) ?? plans[0];
   const minutesUsed = user?.minutesUsed ?? 0;
   const minutesQuota = user?.minutesQuota ?? 30;
   const usedPct = Math.round((minutesUsed / minutesQuota) * 100);
@@ -50,9 +54,9 @@ export default function BillingPage() {
             <span className="text-xs text-muted-foreground">Perpanjang 1 Jul 2026</span>
           </div>
           <div className="mt-4 flex items-end gap-2">
-            <span className="font-display text-2xl font-bold">{plan.name}</span>
+            <span className="font-display text-2xl font-bold">{plan?.name ?? "—"}</span>
             <span className="mb-0.5 text-sm text-muted-foreground">
-              {formatIDR(plan.priceMonthly)}/bln
+              {plan ? formatIDR(plan.priceMonthly) : "—"}/bln
             </span>
           </div>
           <div className="mt-4 flex gap-2">
@@ -110,7 +114,7 @@ export default function BillingPage() {
           Butuh lebih banyak menit dan fitur? Naik paket kapan saja.
         </p>
         <div className="mt-6">
-          <Pricing />
+          <Pricing plans={plans} />
         </div>
       </div>
 

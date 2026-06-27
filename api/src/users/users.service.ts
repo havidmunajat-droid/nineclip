@@ -1,15 +1,20 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import { AppConfigService } from '@/app-config/app-config.service';
 
-export const PLANS: Record<string, { name: string; minutesQuota: number; priceMonthly: number }> = {
-  free: { name: 'Gratis', minutesQuota: 30, priceMonthly: 0 },
-  creator: { name: 'Creator', minutesQuota: 300, priceMonthly: 149_000 },
-  pro: { name: 'Pro', minutesQuota: 1200, priceMonthly: 399_000 },
+// Fallback statis — dipakai jika DB belum ter-seed (startup race condition).
+const PLAN_FALLBACK: Record<string, { name: string; minutesPerMonth: number }> = {
+  free:    { name: 'Free',    minutesPerMonth: 30 },
+  creator: { name: 'Creator', minutesPerMonth: 300 },
+  pro:     { name: 'Pro',     minutesPerMonth: 1200 },
 };
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private appConfig: AppConfigService,
+  ) {}
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -33,8 +38,8 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User tidak ditemukan');
 
-    const plan = PLANS[user.planId] ?? PLANS['free'];
-    return { ...user, planName: plan.name, minutesQuota: plan.minutesQuota };
+    const plan = (await this.appConfig.getPlan(user.planId)) ?? PLAN_FALLBACK[user.planId] ?? PLAN_FALLBACK['free']!;
+    return { ...user, planName: plan.name, minutesQuota: plan.minutesPerMonth };
   }
 
   /** Settings → "Aktifkan mode Brand". Idempotent. */
@@ -70,7 +75,7 @@ export class UsersService {
   async hasQuota(userId: string, requestedMinutes: number): Promise<boolean> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) return false;
-    const plan = PLANS[user.planId] ?? PLANS['free'];
-    return user.minutesUsed + requestedMinutes <= plan.minutesQuota;
+    const plan = (await this.appConfig.getPlan(user.planId)) ?? PLAN_FALLBACK[user.planId] ?? PLAN_FALLBACK['free']!;
+    return user.minutesUsed + requestedMinutes <= plan.minutesPerMonth;
   }
 }

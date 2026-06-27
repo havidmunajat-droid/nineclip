@@ -10,9 +10,9 @@ import {
 import { JwtGuard } from '@/auth/guards/jwt.guard';
 import { AdminGuard } from '@/auth/guards/admin.guard';
 import { AppConfigService } from './app-config.service';
-import { UpdatePackageConfigDto, UpdatePlatformConfigDto } from './dto/app-config.dto';
+import { UpdatePackageConfigDto, UpdatePlanConfigDto, UpdatePlatformConfigDto } from './dto/app-config.dto';
 
-/** GET /config/packages — publik, dipakai campaign wizard frontend */
+/** GET /config/* — publik, dipakai campaign wizard + billing frontend */
 @Controller('config')
 export class PublicConfigController {
   constructor(private appConfig: AppConfigService) {}
@@ -20,6 +20,11 @@ export class PublicConfigController {
   @Get('packages')
   getPackages() {
     return this.appConfig.getPackages();
+  }
+
+  @Get('plans')
+  getPlans() {
+    return this.appConfig.getPlans();
   }
 }
 
@@ -31,11 +36,12 @@ export class AdminConfigController {
 
   @Get()
   async getConfig() {
-    const [packages, platform] = await Promise.all([
+    const [packages, platform, plans] = await Promise.all([
       this.appConfig.getPackages(),
       this.appConfig.getPlatformConfig(),
+      this.appConfig.getPlans(),
     ]);
-    return { packages, platform };
+    return { packages, platform, plans };
   }
 
   @Patch('packages/:type')
@@ -48,5 +54,11 @@ export class AdminConfigController {
   @HttpCode(200)
   updatePlatform(@Body() dto: UpdatePlatformConfigDto) {
     return this.appConfig.updatePlatformConfig(dto);
+  }
+
+  @Patch('plans/:planId')
+  @HttpCode(200)
+  updatePlan(@Param('planId') planId: string, @Body() dto: UpdatePlanConfigDto) {
+    return this.appConfig.updatePlan(planId, dto);
   }
 }
