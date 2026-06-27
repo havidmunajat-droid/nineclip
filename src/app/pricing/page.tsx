@@ -1,10 +1,13 @@
 import { Navbar } from "@/components/marketing/navbar";
 import { Footer } from "@/components/marketing/footer";
 import { Pricing } from "@/components/marketing/pricing";
+import { fetchPublicPlans } from "@/lib/server-api";
 
 export const metadata = { title: "Harga" };
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const plans = await fetchPublicPlans();
+
   return (
     <div className="relative min-h-screen overflow-x-hidden">
       <Navbar />
@@ -25,7 +28,7 @@ export default function PricingPage() {
           </p>
         </div>
         <div className="mt-14">
-          <Pricing />
+          <Pricing plans={plans} />
         </div>
       </section>
       <Footer />

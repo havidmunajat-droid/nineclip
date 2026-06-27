@@ -22,6 +22,7 @@ import { ViralityChart } from "@/components/shared/virality-chart";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { engagementCurve, projects } from "@/lib/mock";
+import { fetchPublicPlans } from "@/lib/server-api";
 
 const steps = [
   {
@@ -97,8 +98,11 @@ const faqs = [
   },
 ];
 
-export default function LandingPage() {
-  const curve = engagementCurve(projects[0]!, 48);
+export default async function LandingPage() {
+  const [curve, plans] = await Promise.all([
+    Promise.resolve(engagementCurve(projects[0]!, 48)),
+    fetchPublicPlans(),
+  ]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden">
@@ -281,7 +285,7 @@ export default function LandingPage() {
           desc="Bayar mudah dengan QRIS, Virtual Account, dan e-wallet lewat Midtrans."
         />
         <div className="mt-12">
-          <Pricing />
+          <Pricing plans={plans} />
         </div>
       </section>
 
