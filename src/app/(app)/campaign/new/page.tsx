@@ -54,7 +54,7 @@ export default function CampaignWizardPage() {
   const [platforms, setPlatforms] = useState<string[]>(["tiktok"]);
   const [deadline, setDeadline] = useState("");
 
-  // Step 3
+  // Step 3 — default growth
   const [pkg, setPkg] = useState<PackageType>("growth");
 
   // Step 4
@@ -261,7 +261,7 @@ export default function CampaignWizardPage() {
         {step === 2 && (
           <div>
             <h2 className="font-display font-semibold">3 · Pilih paket</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {PACKAGES.map((p) => {
                 const active = pkg === p.id;
                 return (
@@ -270,26 +270,26 @@ export default function CampaignWizardPage() {
                     type="button"
                     onClick={() => setPkg(p.id)}
                     className={cn(
-                      "relative flex flex-col rounded-xl border p-5 text-left transition-colors",
+                      "relative flex flex-col rounded-xl border p-4 text-left transition-colors",
                       active
                         ? "border-lime/60 bg-lime/5 ring-1 ring-lime/40"
                         : "border-border bg-secondary/30 hover:border-white/20",
                     )}
                   >
                     {p.highlighted && (
-                      <Badge className="absolute -top-2 right-3">Populer</Badge>
+                      <Badge className="absolute -top-2 right-3 text-[10px]">Populer</Badge>
                     )}
-                    <span className="font-display font-bold">{p.name}</span>
-                    <span className="mt-1 font-display text-2xl font-extrabold text-lime">
+                    <span className="font-display text-sm font-bold">{p.name}</span>
+                    <span className="mt-1 font-display text-xl font-extrabold text-lime">
                       {formatIdr(p.priceIdr)}
                     </span>
-                    <span className="mt-3 text-xs text-muted-foreground">
-                      {p.maxClippers} clipper maks
+                    <span className="mt-2 text-xs text-muted-foreground">
+                      {p.credits} slot · {p.maxClippers} clipper
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      ~{formatIdr(estRewardPerClipper(p))} / clipper
+                      ~{formatIdr(p.rewardPerVideo)} / video
                     </span>
-                    <span className="mt-3 text-xs text-muted-foreground">{p.tagline}</span>
+                    <span className="mt-2 text-[11px] text-muted-foreground">{p.tagline}</span>
                   </button>
                 );
               })}
@@ -308,8 +308,10 @@ export default function CampaignWizardPage() {
               <Row label="Platform" value={platforms.join(", ")} />
               <Row label="Deadline" value={deadline || "—"} />
               <Row label="Paket" value={selected.name} />
+              <Row label="Slot video" value={String(selected.credits)} />
               <Row label="Maks clipper" value={String(selected.maxClippers)} />
               <Row label="Reward pool" value={formatIdr(selected.rewardPool)} />
+              <Row label="Reward / video" value={formatIdr(selected.rewardPerVideo)} />
               <div className="flex items-center justify-between border-t border-border pt-3">
                 <dt className="font-medium">Total bayar</dt>
                 <dd className="font-display text-xl font-extrabold text-lime">

@@ -11,7 +11,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 
 export const TARGET_PLATFORMS = ['tiktok', 'shorts', 'reels'] as const;
-export const PACKAGE_TYPES = ['starter', 'growth', 'pro'] as const;
+export const PACKAGE_TYPES = ['starter', 'growth', 'pro', 'ultra'] as const;
 
 export class CreateCampaignDto {
   @ApiProperty({ example: 'Campaign Produk Skincare Juni' })
@@ -36,5 +36,5 @@ export class CreateCampaignDto {
 
   @ApiProperty({ enum: PACKAGE_TYPES, example: 'growth' })
   @IsIn(PACKAGE_TYPES as unknown as string[])
-  packageType: 'starter' | 'growth' | 'pro';
+  packageType: 'starter' | 'growth' | 'pro' | 'ultra';
 }

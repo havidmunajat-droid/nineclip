@@ -16,6 +16,7 @@ import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { ViralScoreDto } from './dto/viral-score.dto';
+import { CompensationDto } from './dto/compensation.dto';
 
 @ApiTags('campaigns')
 @Controller({ path: 'campaigns', version: '1' })
@@ -84,5 +85,18 @@ export class CampaignsController {
   @ApiBearerAuth()
   getClippers(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.campaigns.getClippers(user.sub, id);
+  }
+
+  // Section 8 — brand pilih kompensasi saat KPI tidak tercapai (extension|voucher)
+  @Post(':id/compensation')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
+  compensation(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: CompensationDto,
+  ) {
+    return this.campaigns.applyCompensation(user.sub, id, dto.choice);
   }
 }

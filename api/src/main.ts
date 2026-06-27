@@ -2,10 +2,19 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import cookieParser from 'cookie-parser';
-import compression from 'compression';
+// NB: namespace import (`* as`) wajib di sini — api/tsconfig tidak pakai
+// esModuleInterop, jadi default import gagal di runtime (CommonJS).
+import * as cookieParser from 'cookie-parser';
+import * as compression from 'compression';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+
+// Prisma field BigInt (Campaign.totalViews, CampaignClipper.viewCount) tidak bisa
+// di-JSON.stringify secara default. Konversi ke Number aman: nilai jauh di bawah
+// Number.MAX_SAFE_INTEGER (views maks ~1 juta).
+(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
+  return Number(this);
+};
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn', 'log'] });

@@ -10,6 +10,9 @@ import { CampaignsModule } from './campaigns/campaigns.module';
 import { ClipperModule } from './clipper/clipper.module';
 import { AdminModule } from './admin/admin.module';
 import { WalletModule } from './wallet/wallet.module';
+import { ScoringModule } from './scoring/scoring.module';
+import { LifecycleModule } from './lifecycle/lifecycle.module';
+import { SocialModule } from './social/social.module';
 import { ClipsModule } from './clips/clips.module';
 import { JobsModule } from './jobs/jobs.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
@@ -57,6 +60,9 @@ import { HealthController } from './health/health.controller';
     ClipperModule,
     AdminModule,
     WalletModule,
+    ScoringModule,
+    LifecycleModule,
+    SocialModule,
     ClipsModule,
     JobsModule,
     SubscriptionsModule,

@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { BadgeCheck, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
-import { getClipperProfile, updateClipperProfile, ApiError } from "@/lib/api";
+import { getClipperProfile, getSocialStatus, updateClipperProfile, ApiError } from "@/lib/api";
+import type { SocialVerificationStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const NICHES = [
@@ -29,19 +32,23 @@ export default function ClipperSetupPage() {
   const [tiktok, setTiktok] = useState("");
   const [youtube, setYoutube] = useState("");
   const [instagram, setInstagram] = useState("");
+  const [socialStatus, setSocialStatus] = useState<SocialVerificationStatus | null>(null);
 
   useEffect(() => {
     let active = true;
-    getClipperProfile()
-      .then((p) => {
-        if (!active || !p) return;
-        setNiches(p.niches ?? []);
-        setRegion(p.region ?? "");
-        setLanguage(p.language ?? "id");
-        setBio(p.bio ?? "");
-        setTiktok(p.socialTiktok ?? "");
-        setYoutube(p.socialYoutube ?? "");
-        setInstagram(p.socialInstagram ?? "");
+    Promise.all([getClipperProfile(), getSocialStatus().catch(() => null)])
+      .then(([p, ss]) => {
+        if (!active) return;
+        if (p) {
+          setNiches(p.niches ?? []);
+          setRegion(p.region ?? "");
+          setLanguage(p.language ?? "id");
+          setBio(p.bio ?? "");
+          setTiktok(p.socialTiktok ?? "");
+          setYoutube(p.socialYoutube ?? "");
+          setInstagram(p.socialInstagram ?? "");
+        }
+        if (ss) setSocialStatus(ss);
       })
       .catch(() => {})
       .finally(() => active && setLoading(false));
@@ -155,11 +162,46 @@ export default function ClipperSetupPage() {
         {/* socials */}
         <section className="rounded-xl border border-border bg-card p-6">
           <Label>Akun sosial media</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Verifikasi akun agar submission kamu diterima otomatis.
+          </p>
           <div className="mt-3 space-y-3">
-            <Input placeholder="TikTok — @username atau URL" value={tiktok} onChange={(e) => setTiktok(e.target.value)} />
-            <Input placeholder="YouTube — channel/URL" value={youtube} onChange={(e) => setYoutube(e.target.value)} />
-            <Input placeholder="Instagram — @username atau URL" value={instagram} onChange={(e) => setInstagram(e.target.value)} />
+            {(
+              [
+                { key: "tiktok", label: "TikTok", value: tiktok, set: setTiktok, placeholder: "@username" },
+                { key: "youtube", label: "YouTube", value: youtube, set: setYoutube, placeholder: "Channel URL atau @handle" },
+                { key: "instagram", label: "Instagram", value: instagram, set: setInstagram, placeholder: "@username" },
+              ] as const
+            ).map(({ key, label, value, set, placeholder }) => {
+              const verified = socialStatus?.[key]?.verified ?? false;
+              return (
+                <div key={key} className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Input
+                      placeholder={`${label} — ${placeholder}`}
+                      value={value}
+                      onChange={(e) => set(e.target.value)}
+                      disabled={verified}
+                    />
+                  </div>
+                  {verified ? (
+                    <Badge className="shrink-0 gap-1 bg-lime/10 text-lime border-lime/40">
+                      <BadgeCheck className="size-3.5" /> Terverifikasi
+                    </Badge>
+                  ) : (
+                    <Button asChild size="sm" variant="secondary" className="shrink-0">
+                      <Link href={`/clipper/verify/${key}`}>Verifikasi</Link>
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
           </div>
+          {!socialStatus?.anyVerified && (
+            <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              Minimal satu akun harus terverifikasi sebelum kamu bisa submit ke campaign.
+            </p>
+          )}
         </section>
 
         {error && (

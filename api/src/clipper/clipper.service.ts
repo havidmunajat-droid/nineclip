@@ -2,20 +2,34 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
+import { CampaignClipper } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { BASE_REWARD_POINTS, MIN_WITHDRAWAL_POINTS } from '@/campaigns/campaign-packages';
+import { ValidationService } from '@/validation/validation.service';
 import { UpdateClipperProfileDto } from './dto/update-profile.dto';
 import { SubmitDto } from './dto/submit.dto';
 import { WithdrawDto } from './dto/withdraw.dto';
 
-// Status keanggotaan yang sudah boleh lihat & download aset campaign.
+// Status keanggotaan yang menempati slot "hidup" (boleh lihat & download aset).
 const ENGAGED = ['accepted', 'submitted', 'verified', 'rewarded'];
+// Section 6 BUSINESS_LOGIC_v2 — jendela booking & penalti.
+const BOOKING_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 jam untuk submit setelah booking
+const PENALTY_MS = 48 * 60 * 60 * 1000; // penalti 48 jam jika slot hangus
 
 @Injectable()
 export class ClipperService {
-  constructor(private prisma: PrismaService) {}
+  private readonly log = new Logger(ClipperService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    @InjectQueue('booking-expiry') private bookingQueue: Queue,
+    private validation: ValidationService,
+  ) {}
 
   // ── Profil DNA ───────────────────────────────────────────────────────────
   async getProfile(userId: string) {
@@ -68,8 +82,10 @@ export class ClipperService {
   }
 
   async getCampaignDetail(userId: string, campaignId: string) {
-    const membership = await this.prisma.campaignClipper.findUnique({
-      where: { campaignId_clipperId: { campaignId, clipperId: userId } },
+    // v2: clipper bisa punya >1 slot per campaign. v2-1 pakai findFirst (ambil slot
+    // pertama) agar setara perilaku lama; logika slot-aware penuh di v2-2.
+    const membership = await this.prisma.campaignClipper.findFirst({
+      where: { campaignId, clipperId: userId },
       include: {
         campaign: {
           select: {
@@ -110,20 +126,181 @@ export class ClipperService {
     return { ...masked, clips };
   }
 
-  async accept(userId: string, campaignId: string) {
-    return this.transition(userId, campaignId, ['invited'], { status: 'accepted' });
+  // ── T&C (Section 10 PRD) — wajib disetujui sebelum booking pertama ─────────
+  async acceptTnc(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { tncAcceptedAt: true },
+    });
+    if (user.tncAcceptedAt) return { tncAcceptedAt: user.tncAcceptedAt };
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { tncAcceptedAt: new Date() },
+      select: { tncAcceptedAt: true },
+    });
+  }
+
+  // ── Booking slot (Section 6 BUSINESS_LOGIC_v2) ─────────────────────────────
+  /**
+   * "Ambil Campaign" — booking 1 slot: kurangi 1 kredit (reserved) & kunci 24 jam.
+   * Maks 2 slot/clipper. Gate: T&C disetujui + tidak dalam penalti + kredit tersedia.
+   * Menjadwalkan auto-release lewat queue 'booking-expiry' (terpisah dari pipeline).
+   */
+  async accept(userId: string, campaignId: string): Promise<CampaignClipper> {
+    const campaign = await this.prisma.campaign.findUnique({ where: { id: campaignId } });
+    if (!campaign) throw new NotFoundException('Campaign tidak ditemukan');
+    if (campaign.status !== 'active') {
+      throw new BadRequestException('Campaign tidak sedang menerima booking');
+    }
+
+    // Gate 1 — T&C wajib disetujui.
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { tncAcceptedAt: true },
+    });
+    if (!user.tncAcceptedAt) throw new ForbiddenException('TNC_NOT_ACCEPTED');
+
+    // Gate 2 — tidak sedang kena penalti auto-release.
+    const profile = await this.prisma.clipperProfile.findUnique({
+      where: { userId },
+      select: { penaltyUntil: true },
+    });
+    if (profile?.penaltyUntil && profile.penaltyUntil > new Date()) {
+      throw new ForbiddenException('PENALTY_ACTIVE');
+    }
+
+    // Booking hanya untuk clipper yang pernah diundang (punya row di campaign ini).
+    const rows = await this.prisma.campaignClipper.findMany({
+      where: { campaignId, clipperId: userId },
+    });
+    if (rows.length === 0) throw new NotFoundException('Kamu belum diundang ke campaign ini');
+    const liveCount = rows.filter((r) => ENGAGED.includes(r.status)).length;
+    if (liveCount >= 2) throw new BadRequestException('Maksimal 2 slot per campaign');
+
+    // Reserve kredit atomik (cegah balapan saat kredit tinggal sedikit).
+    const reserve = await this.prisma.campaign.updateMany({
+      where: { id: campaignId, status: 'active', creditsRemaining: { gt: 0 } },
+      data: { creditsRemaining: { decrement: 1 } },
+    });
+    if (reserve.count === 0) throw new BadRequestException('CREDITS_EXHAUSTED');
+
+    const bookingExpiresAt = new Date(Date.now() + BOOKING_WINDOW_MS);
+    // Pakai ulang row undangan / slot yang sudah bebas; kalau tidak ada, buat slot baru.
+    const reusable =
+      rows.find((r) => r.status === 'invited') ??
+      rows.find((r) => r.status === 'declined' || r.status === 'expired');
+
+    let cc: CampaignClipper;
+    try {
+      if (reusable) {
+        cc = await this.prisma.campaignClipper.update({
+          where: { id: reusable.id },
+          data: { status: 'accepted', bookingExpiresAt, submittedUrl: null, submittedAt: null },
+        });
+      } else {
+        const used = rows.map((r) => r.slotNumber);
+        const slotNumber = [1, 2].find((n) => !used.includes(n));
+        if (!slotNumber) throw new BadRequestException('Maksimal 2 slot per campaign');
+        cc = await this.prisma.campaignClipper.create({
+          data: { campaignId, clipperId: userId, status: 'accepted', slotNumber, bookingExpiresAt },
+        });
+      }
+    } catch (err) {
+      // Rollback reserve kredit jika gagal booking row.
+      await this.prisma.campaign.update({
+        where: { id: campaignId },
+        data: { creditsRemaining: { increment: 1 } },
+      });
+      throw err;
+    }
+
+    await this.bookingQueue.add(
+      'expire',
+      { campaignClipperId: cc.id },
+      { delay: BOOKING_WINDOW_MS, jobId: `booking-${cc.id}` },
+    );
+
+    return cc;
   }
 
   async decline(userId: string, campaignId: string) {
+    // Decline hanya untuk undangan yang belum di-booking (tidak menyentuh kredit).
     return this.transition(userId, campaignId, ['invited'], { status: 'declined' });
   }
 
+  /**
+   * Submit URL untuk slot ter-booking, selama masih dalam jendela 24 jam.
+   * Validasi platform/kepemilikan akun penuh menyusul di v2-6.
+   */
   async submit(userId: string, campaignId: string, dto: SubmitDto) {
-    return this.transition(userId, campaignId, ['accepted'], {
-      status: 'submitted',
-      submittedUrl: dto.url,
-      submittedAt: new Date(),
+    const slot = await this.prisma.campaignClipper.findFirst({
+      where: { campaignId, clipperId: userId, status: 'accepted' },
+      orderBy: { slotNumber: 'asc' },
     });
+    if (!slot) throw new BadRequestException('Tidak ada slot aktif untuk disubmit');
+    if (slot.bookingExpiresAt && slot.bookingExpiresAt <= new Date()) {
+      throw new BadRequestException('BOOKING_EXPIRED');
+    }
+
+    // Originality check (Section 5) — URL yang sama sudah disubmit di campaign ini?
+    const isOriginal = await this.checkOriginality(campaignId, dto.url, slot.id);
+
+    const cc = await this.prisma.campaignClipper.update({
+      where: { id: slot.id },
+      data: {
+        status: 'submitted',
+        submittedUrl: dto.url,
+        submittedAt: new Date(),
+        isOriginal,
+      },
+    });
+
+    // v2-6: validasi URL + fetch stats async (Puppeteer bisa lambat 20-30 detik)
+    void this.validation.validateSubmission(cc.id).catch((e) =>
+      this.log.warn(`validateSubmission [${cc.id}] error: ${(e as Error).message}`),
+    );
+
+    return cc;
+  }
+
+  /** True jika URL belum pernah disubmit di campaign ini (anti reupload, Section 5). */
+  private async checkOriginality(
+    campaignId: string,
+    url: string,
+    selfId: string,
+  ): Promise<boolean> {
+    const dup = await this.prisma.campaignClipper.findFirst({
+      where: {
+        campaignId,
+        submittedUrl: url,
+        id: { not: selfId },
+        status: { in: ['submitted', 'pending_manual_review', 'verified', 'rewarded'] },
+      },
+      select: { id: true },
+    });
+    return !dup;
+  }
+
+  /**
+   * Dipanggil BookingProcessor saat timer 24 jam habis. Jika slot masih 'accepted'
+   * (belum submit): kembalikan kredit, set 'expired', kenakan penalti 48 jam. Idempotent.
+   */
+  async autoReleaseBooking(campaignClipperId: string) {
+    const cc = await this.prisma.campaignClipper.findUnique({ where: { id: campaignClipperId } });
+    if (!cc || cc.status !== 'accepted') return { released: false };
+
+    await this.prisma.$transaction([
+      this.prisma.campaignClipper.update({ where: { id: cc.id }, data: { status: 'expired' } }),
+      this.prisma.campaign.update({
+        where: { id: cc.campaignId },
+        data: { creditsRemaining: { increment: 1 } },
+      }),
+      this.prisma.clipperProfile.updateMany({
+        where: { userId: cc.clipperId },
+        data: { penaltyUntil: new Date(Date.now() + PENALTY_MS) },
+      }),
+    ]);
+    return { released: true };
   }
 
   // ── Earnings & withdrawal ─────────────────────────────────────────────────
@@ -214,8 +391,9 @@ export class ClipperService {
     allowed: string[],
     data: Record<string, unknown>,
   ) {
-    const membership = await this.prisma.campaignClipper.findUnique({
-      where: { campaignId_clipperId: { campaignId, clipperId: userId } },
+    // v2-1: findFirst (setara perilaku lama 1-slot); slot-aware penuh di v2-2.
+    const membership = await this.prisma.campaignClipper.findFirst({
+      where: { campaignId, clipperId: userId },
     });
     if (!membership) throw new NotFoundException('Undangan campaign tidak ditemukan');
     if (!allowed.includes(membership.status)) {
@@ -228,10 +406,13 @@ export class ClipperService {
     status: string;
     submittedUrl: string | null;
     submittedAt: Date | null;
+    bookingExpiresAt: Date | null;
+    platform: string | null;
     baseReward: number;
     performanceBonus: number;
+    performanceScore: number;
     totalReward: number;
-    viewCount: number | null;
+    viewCount: bigint; // kolom kini BIGINT NOT NULL (v2)
     campaign: {
       id: string;
       name: string;
@@ -254,10 +435,13 @@ export class ClipperService {
       status: row.status,
       submittedUrl: row.submittedUrl,
       submittedAt: row.submittedAt,
+      bookingExpiresAt: row.bookingExpiresAt,
+      platform: row.platform,
       baseReward: row.baseReward,
       performanceBonus: row.performanceBonus,
+      performanceScore: row.performanceScore,
       totalReward: row.totalReward,
-      viewCount: row.viewCount,
+      viewCount: Number(row.viewCount),
       estimatedBaseReward: BASE_REWARD_POINTS,
     };
   }

@@ -29,16 +29,23 @@ model User {
   // Jalur masuk pertama (intent onboarding) — penentu dashboard default.
   primaryRole   String  @default("tool") // tool | brand | clipper
 
+  // Business Logic v2 — T&C wajib disetujui sebelum ambil campaign.
+  // NULL = belum setuju → backend tolak ambil campaign (403 TNC_NOT_ACCEPTED).
+  tncAcceptedAt DateTime?
+
   projects      Project[]
   refreshTokens RefreshToken[]
   subscriptions Subscription[]
 
   // Sprint 2 relations
-  clipperProfile     ClipperProfile?
-  campaigns          Campaign[] // sebagai brand
-  campaignClippers   CampaignClipper[] // sebagai clipper
-  transactions       Transaction[]
-  withdrawalRequests WithdrawalRequest[]
+  clipperProfile      ClipperProfile?
+  campaigns           Campaign[] // sebagai brand
+  campaignClippers    CampaignClipper[] // sebagai clipper
+  transactions        Transaction[]
+  withdrawalRequests  WithdrawalRequest[]
+  // v2 relations
+  socialVerifications SocialVerification[]
+  vouchers            Voucher[] // sebagai brand
 
   @@index([email])
 }
@@ -148,30 +155,69 @@ model Subscription {
 }
 
 // ============================================================
-// Sprint 2 — AI Campaign Engine
+// Sprint 2 — AI Campaign Engine (Business Logic v2)
 // ============================================================
 
 model ClipperProfile {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  niches          String[] @default([])
+  id       String   @id @default(cuid())
+  userId   String   @unique
+  niches   String[] @default([])
   // contoh niche: bisnis, edukasi, gaming, kuliner, motivasi,
   //               teknologi, hiburan, kesehatan, travel, lifestyle
-  region          String?  @db.VarChar(100)
-  language        String   @default("id") @db.VarChar(50)
-  avgViews        Int      @default(0)
-  avgCtr          Decimal  @default(0) @db.Decimal(5, 2)
-  score           Int      @default(50) // 0-100, dihitung otomatis
-  bio             String?
-  socialTiktok    String?  @db.VarChar(255)
-  socialYoutube   String?  @db.VarChar(255)
-  socialInstagram String?  @db.VarChar(255)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  region   String?  @db.VarChar(100)
+  language String   @default("id") @db.VarChar(50)
+  avgViews Int      @default(0)
+  avgCtr   Decimal  @default(0) @db.Decimal(5, 2)
+  score    Int      @default(50) // 0-100, dihitung otomatis
+  bio      String?
+
+  // Legacy v1 — handle sosial bebas-isi. DIPERTAHANKAN sementara di v2-1 agar
+  // service /clipper/profile lama tetap kompilasi & data tidak hilang.
+  // Akan dibersihkan di v2-5 saat Social Verification menggantikan pemakaiannya.
+  socialTiktok    String? @db.VarChar(255)
+  socialYoutube   String? @db.VarChar(255)
+  socialInstagram String? @db.VarChar(255)
+
+  // v2 — Social media accounts (diisi saat Bio Token verification, Section 8 PRD)
+  tiktokUsername      String?   @db.VarChar(100)
+  tiktokVerified      Boolean   @default(false)
+  tiktokVerifiedAt    DateTime?
+  youtubeChannelId    String?   @db.VarChar(100)
+  youtubeUsername     String?   @db.VarChar(100)
+  youtubeVerified     Boolean   @default(false)
+  youtubeVerifiedAt   DateTime?
+  instagramUsername   String?   @db.VarChar(100)
+  instagramVerified   Boolean   @default(false)
+  instagramVerifiedAt DateTime?
+
+  // v2 — penalti auto-release booking 24 jam (cek sebelum boleh ambil campaign baru)
+  penaltyUntil DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// v2 — Bio Token Verification (tabel sementara, Section 2.2 PRD)
+model SocialVerification {
+  id         String    @id @default(cuid())
+  userId     String
+  platform   String    @db.VarChar(20) // tiktok | youtube | instagram
+  username   String    @db.VarChar(100)
+  code       String    @db.VarChar(60) // format: NC-[6char userId]-[4char timestamp]
+  status     String    @default("pending") @db.VarChar(20) // pending | verified | expired
+  expiresAt  DateTime // NOW() + 24 jam
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([code])
+  @@index([status])
 }
 
 model Campaign {
@@ -184,19 +230,41 @@ model Campaign {
   detectedNiches  String[] @default([])
   targetPlatforms String[] @default([]) // tiktok | shorts | reels
   deadline        DateTime
-  packageType     String   @db.VarChar(20) // starter | growth | pro
-  totalCredits    Int
-  rewardPool      Int // 70% dari nilai paket
-  platformFee     Int // 30% dari nilai paket
-  maxClippers     Int
-  status          String   @default("draft") @db.VarChar(30)
-  // status flow: draft -> processing -> ready_review -> active -> completed -> expired
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  packageType     String   @db.VarChar(20) // starter | growth | pro | ultra
+
+  // Kredit & kuota (v2: 1 kredit = 1 slot video)
+  totalCredits     Int
+  creditsRemaining Int @default(0)
+  maxClippers      Int // = clipper_invited (jumlah yang diundang)
+  videosVerified   Int @default(0)
+
+  // Alokasi dana (v2: fee 20%, pool 80% = baseFund 60% + bonusPool 40%)
+  platformFee        Int // 20% dari harga paket
+  rewardPool         Int // 80% clipper pool (dipertahankan utk kompat; = baseFund + bonusPool)
+  baseFund           Int @default(0) // 60% dari pool → Validated Reward
+  bonusPool          Int @default(0) // 40% dari pool → Top Performer
+  bonusPoolRemaining Int @default(0) // mutable: roll-over hangus + sisa → platform residual
+  rewardPerVideo     Int @default(0) // baseFund ÷ totalCredits (precompute saat bayar)
+
+  // KPI & lifecycle (v2 Section 7)
+  kpiViews             Int       @default(0)
+  totalViews           BigInt    @default(0)
+  firstValidatedAt     DateTime? // mulai hitung Kondisi A
+  activatedAt          DateTime? // mulai hitung Kondisi C (30 hari absolut)
+  extendedAt           DateTime?
+  extensionDays        Int       @default(0)
+  compensationDeadline DateTime?
+
+  status String @default("draft") @db.VarChar(30)
+  // status flow: draft -> processing -> active -> kpi_missed -> completed | expired
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   brand    User              @relation(fields: [brandId], references: [id])
   project  Project?          @relation(fields: [projectId], references: [id])
   clippers CampaignClipper[]
+  vouchers Voucher[]
 
   @@index([brandId])
   @@index([status])
@@ -207,23 +275,40 @@ model CampaignClipper {
   campaignId       String
   clipperId        String
   status           String    @default("invited") @db.VarChar(30)
-  // status flow: invited -> accepted -> declined -> submitted -> verified -> rewarded
+  // status flow: invited -> accepted -> declined -> submitted ->
+  //              pending_manual_review -> verified -> rewarded | rejected | expired
+  slotNumber       Int       @default(1) // 1 = video pertama, 2 = video kedua clipper ini
+  bookingExpiresAt DateTime? // batas 24 jam submit setelah booking slot
+  platform         String?   @db.VarChar(20) // tiktok | youtube | instagram (dari URL submit)
   submittedUrl     String?
   submittedAt      DateTime?
   verifiedAt       DateTime?
-  baseReward       Int       @default(0)
-  performanceBonus Int       @default(0)
-  totalReward      Int       @default(0)
-  viewCount        Int?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+
+  // Stats sosial (Section 7 Validation Service)
+  viewCount    BigInt  @default(0)
+  likeCount    Int     @default(0)
+  commentCount Int     @default(0)
+  shareCount   Int     @default(0)
+  isOriginal   Boolean @default(true)
+
+  // Scoring & reward (Section 5 BUSINESS_LOGIC_v2)
+  performanceScore Int  @default(0)
+  finalRank        Int?
+  baseReward       Int  @default(0)
+  performanceBonus Int  @default(0)
+  totalReward      Int  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   campaign Campaign @relation(fields: [campaignId], references: [id])
   clipper  User     @relation(fields: [clipperId], references: [id])
 
-  @@unique([campaignId, clipperId])
+  // v2: 1 clipper bisa ambil 2 slot → unik per slot, bukan per clipper
+  @@unique([campaignId, clipperId, slotNumber])
   @@index([campaignId])
   @@index([clipperId])
+  @@index([status])
 }
 
 model Transaction {
@@ -231,7 +316,8 @@ model Transaction {
   userId      String
   type        String   @db.VarChar(40)
   // type: credit_purchase | campaign_debit | reward_earn | bonus_earn |
-  //       point_withdraw_request | point_withdraw_done
+  //       point_withdraw_request | point_withdraw_done |
+  //       bonus_pool_payout | bonus_pool_residual | voucher_issued
   amount      Int // positif = masuk, negatif = keluar
   balanceType String   @db.VarChar(10) // credit | point
   description String?
@@ -262,4 +348,22 @@ model WithdrawalRequest {
 
   @@index([userId])
   @@index([status])
+}
+
+// v2 — Voucher kompensasi (Section 8 BUSINESS_LOGIC_v2, Opsi B KPI-missed)
+model Voucher {
+  id              String    @id @default(cuid())
+  brandId         String
+  campaignId      String? // campaign sumber kompensasi
+  code            String    @unique @db.VarChar(40)
+  discountPercent Int // mis. 20
+  used            Boolean   @default(false)
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  brand    User      @relation(fields: [brandId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([brandId])
+  @@index([code])
 }

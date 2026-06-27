@@ -122,13 +122,14 @@ export interface Invoice {
 
 // ── Sprint 2 — Campaign Engine ──────────────────────────────────────────────
 
-export type PackageType = "starter" | "growth" | "pro";
+export type PackageType = "starter" | "growth" | "pro" | "ultra";
 
 export type CampaignStatus =
   | "draft"
   | "processing"
   | "ready_review"
   | "active"
+  | "kpi_missed"
   | "completed"
   | "expired";
 
@@ -191,14 +192,36 @@ export interface ClipperCampaign {
   deadline: string;
   campaignStatus: string;
   viralScore: number | null;
-  /** Status keanggotaan clipper: invited | accepted | declined | submitted | verified | rewarded */
+  /** Status keanggotaan clipper: invited | accepted | declined | submitted |
+   *  pending_manual_review | verified | rewarded | rejected | expired */
   status: string;
   submittedUrl: string | null;
+  submittedAt: string | null;
+  bookingExpiresAt: string | null;
+  platform: string | null;
   baseReward: number;
   performanceBonus: number;
+  performanceScore: number;
   totalReward: number;
   viewCount: number | null;
   estimatedBaseReward: number;
+}
+
+export interface SocialVerificationStatus {
+  tiktok: { verified: boolean; username: string | null };
+  youtube: { verified: boolean; username: string | null };
+  instagram: { verified: boolean; username: string | null };
+  anyVerified: boolean;
+}
+
+export interface AdminManualVerification {
+  id: string;
+  status: string;
+  submittedUrl: string | null;
+  platform: string | null;
+  submittedAt: string | null;
+  campaign: { id: string; name: string; packageType: string };
+  clipper: { id: string; name: string; email: string };
 }
 
 export interface ClipperClip {

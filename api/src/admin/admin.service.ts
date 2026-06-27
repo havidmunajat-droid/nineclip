@@ -1,11 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { BASE_REWARD_POINTS, getPerformanceBonus } from '@/campaigns/campaign-packages';
+import { LifecycleService } from '@/lifecycle/lifecycle.service';
+import { ValidationService } from '@/validation/validation.service';
+import { ManualApproveDto } from '@/validation/dto/manual-approve.dto';
 import { UpdateUserRolesDto, VerifySubmissionDto, WithdrawalActionDto } from './dto/admin.dto';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private lifecycle: LifecycleService,
+    private validation: ValidationService,
+  ) {}
 
   // ── Campaigns (semua brand) ───────────────────────────────────────────────
   listCampaigns() {
@@ -27,64 +33,22 @@ export class AdminService {
   }
 
   /**
-   * Verifikasi submission clipper → hitung reward (base + bonus views),
-   * kreditkan ke point_balance, catat transaksi. Idempotent via guard status.
+   * Verifikasi submission clipper (v2) → Validated Reward via LifecycleService:
+   * views ≥ 200 & original → verified + bayar rewardPerVideo + videosVerified++,
+   * selain itu → rejected + roll-over ke bonus pool. Bonus pool dibayar saat close.
    */
   async verifySubmission(campaignId: string, ccId: string, dto: VerifySubmissionDto) {
     const cc = await this.prisma.campaignClipper.findUnique({ where: { id: ccId } });
     if (!cc || cc.campaignId !== campaignId) {
       throw new NotFoundException('Submission tidak ditemukan');
     }
-    if (cc.status !== 'submitted') {
-      throw new BadRequestException(`Tidak bisa verifikasi status "${cc.status}"`);
-    }
-
-    const baseReward = BASE_REWARD_POINTS;
-    const performanceBonus = getPerformanceBonus(dto.viewCount);
-    const totalReward = baseReward + performanceBonus;
-
-    await this.prisma.$transaction([
-      this.prisma.campaignClipper.update({
-        where: { id: ccId },
-        data: {
-          status: 'verified',
-          verifiedAt: new Date(),
-          viewCount: dto.viewCount,
-          baseReward,
-          performanceBonus,
-          totalReward,
-        },
-      }),
-      this.prisma.user.update({
-        where: { id: cc.clipperId },
-        data: { pointBalance: { increment: totalReward } },
-      }),
-      this.prisma.transaction.create({
-        data: {
-          userId: cc.clipperId,
-          type: 'reward_earn',
-          amount: baseReward,
-          balanceType: 'point',
-          description: 'Reward verifikasi klip',
-          referenceId: ccId,
-        },
-      }),
-      ...(performanceBonus > 0
-        ? [
-            this.prisma.transaction.create({
-              data: {
-                userId: cc.clipperId,
-                type: 'bonus_earn',
-                amount: performanceBonus,
-                balanceType: 'point',
-                description: `Bonus performa ${dto.viewCount.toLocaleString('id-ID')} views`,
-                referenceId: ccId,
-              },
-            }),
-          ]
-        : []),
-    ]);
-
+    await this.lifecycle.applyValidatedReward(ccId, {
+      viewCount: dto.viewCount,
+      likeCount: dto.likeCount,
+      commentCount: dto.commentCount,
+      shareCount: dto.shareCount,
+      isOriginal: dto.isOriginal,
+    });
     return this.prisma.campaignClipper.findUniqueOrThrow({ where: { id: ccId } });
   }
 
@@ -142,6 +106,19 @@ export class AdminService {
     ]);
 
     return this.prisma.withdrawalRequest.findUniqueOrThrow({ where: { id } });
+  }
+
+  // ── Manual verification queue (v2-6) ─────────────────────────────────────
+  listManualQueue() {
+    return this.validation.listManualQueue();
+  }
+
+  approveManual(ccId: string, dto: ManualApproveDto) {
+    return this.validation.approveManual(ccId, dto);
+  }
+
+  rejectManual(ccId: string) {
+    return this.validation.rejectManual(ccId);
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '@/auth/guards/admin.guard';
 import { AdminService } from './admin.service';
 import { UpdateUserRolesDto, VerifySubmissionDto, WithdrawalActionDto } from './dto/admin.dto';
+import { ManualApproveDto, ManualRejectDto } from '@/validation/dto/manual-approve.dto';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -37,6 +38,25 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   verify(@Param('id') id: string, @Param('cid') cid: string, @Body() dto: VerifySubmissionDto) {
     return this.admin.verifySubmission(id, cid, dto);
+  }
+
+  // Manual verification queue (v2-6)
+  @Get('verifications')
+  manualQueue() {
+    return this.admin.listManualQueue();
+  }
+
+  @Post('verifications/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  approveManual(@Param('id') id: string, @Body() dto: ManualApproveDto) {
+    return this.admin.approveManual(id, dto);
+  }
+
+  @Post('verifications/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  rejectManual(@Param('id') id: string, @Body() _dto: ManualRejectDto) {
+    return this.admin.rejectManual(id);
   }
 
   // Withdrawals

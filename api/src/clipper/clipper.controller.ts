@@ -37,6 +37,13 @@ export class ClipperController {
     return this.clipper.upsertProfile(user.sub, dto);
   }
 
+  // Section 10 PRD — clipper setuju T&C (sekali), wajib sebelum booking pertama.
+  @Post('accept-tnc')
+  @HttpCode(HttpStatus.OK)
+  acceptTnc(@CurrentUser() user: JwtPayload) {
+    return this.clipper.acceptTnc(user.sub);
+  }
+
   @Get('campaigns')
   listCampaigns(@CurrentUser() user: JwtPayload) {
     return this.clipper.listCampaigns(user.sub);

@@ -1,6 +1,19 @@
 # nineClip — Sprint 2 PRD: AI Campaign Engine
+> Versi 2.0 — Update: Social Verification, Validation Service, Business Logic v2
 > Dokumen ini adalah referensi tunggal untuk pengembangan Sprint 2.
-> Baca seluruh dokumen sebelum mulai menulis satu baris kode pun.
+> Baca SELURUH dokumen sebelum mulai menulis satu baris kode pun.
+
+---
+
+## DOKUMEN PENDAMPING (WAJIB DIBACA BERSAMAAN)
+
+| File | Isi |
+|---|---|
+| `SPRINT2_PRD.md` (ini) | Arsitektur teknis, DB schema, API, Frontend routes |
+| `BUSINESS_LOGIC_v2.md` | Logika bisnis, reward, formula score, lifecycle campaign |
+
+⚠️ Jika ada konflik antara dua file, **BUSINESS_LOGIC_v2.md yang berlaku** untuk semua hal
+terkait perhitungan finansial, reward, dan lifecycle campaign.
 
 ---
 
@@ -12,42 +25,46 @@ api/src/jobs/pipeline.service.ts   ← JANGAN DIUBAH
 api/src/jobs/jobs.processor.ts     ← JANGAN DIUBAH
 api/src/jobs/jobs.module.ts        ← JANGAN DIUBAH
 src/lib/auth.tsx                   ← JANGAN DIUBAH
-src/lib/api.ts                     ← boleh ditambah, tidak boleh dihapus/diubah yang sudah ada
+src/lib/api.ts                     ← boleh ditambah, tidak boleh hapus/ubah yang sudah ada
 ```
 
 ### Pipeline lama tetap jalan & terlihat
 - Halaman `/new`, `/projects`, `/projects/[id]` tetap ada dan accessible
-- Fitur AI Clipping (yt-dlp → Groq → FFmpeg) tetap berfungsi untuk clipper individu
-- Pipeline ini juga dipakai oleh Campaign Engine ketika Brand upload video
-- Monetisasi fitur lama (subscription/credits per project) tetap berjalan
+- Fitur AI Clipping (yt-dlp → Groq → FFmpeg) tetap untuk clipper individu
+- Pipeline dipakai juga oleh Campaign Engine saat Brand upload video
+- Monetisasi fitur lama tetap berjalan
 
 ### Filosofi arsitektur Sprint 2
-Platform kini punya **dua mode** dalam satu akun:
-- **Tool Mode** (lama): User sebagai clipper mandiri → buat project → download klip → pakai sendiri
-- **Campaign Mode** (baru): User sebagai Brand → buat campaign → AI matching → clipper distribusi → reward
+Dua mode dalam satu akun:
+- **Tool Mode** (lama): clipper mandiri → buat project → download klip → pakai sendiri
+- **Campaign Mode** (baru): Brand → buat campaign → AI matching → clipper distribusi → reward
 
 ---
 
 ## 1. User System
 
 ### Satu akun, dua peran
-User yang sama bisa jadi Brand sekaligus Clipper terdaftar. Tidak ada akun terpisah.
+User yang sama bisa jadi Brand sekaligus Clipper. Tidak ada akun terpisah.
 
-### Perubahan tabel `users`
-Tambah kolom berikut ke tabel users yang sudah ada:
-```sql
-ALTER TABLE users ADD COLUMN credit_balance   INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE users ADD COLUMN point_balance    INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE users ADD COLUMN is_clipper       BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE users ADD COLUMN is_brand         BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE users ADD COLUMN is_admin         BOOLEAN NOT NULL DEFAULT false;
+### Onboarding intent-based (landing page)
+```
+/?intent=brand    → register → is_brand=true  → redirect /campaign/new
+/?intent=clipper  → register → redirect /clipper/setup
+/?intent=tool     → register → redirect /new (tool mode, default)
 ```
 
-Aturan:
-- `is_clipper = true` → user sudah mengisi profil DNA clipper
-- `is_brand = true` → user sudah pernah membuat minimal 1 campaign
-- `is_admin = true` → akses admin panel (set manual via DB)
-- User lama yang sudah ada: semua tetap bisa pakai Tool Mode, `is_clipper` dan `is_brand` default false
+Penambahan role kedua hanya via Settings, bukan di onboarding utama.
+
+### Perubahan tabel `users`
+```sql
+ALTER TABLE users ADD COLUMN credit_balance    INTEGER   NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN point_balance     INTEGER   NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN is_clipper        BOOLEAN   NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN is_brand          BOOLEAN   NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN is_admin          BOOLEAN   NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN tnc_accepted_at   TIMESTAMP;
+-- tnc_accepted_at NULL = belum setuju T&C, tidak bisa ambil campaign
+```
 
 ---
 
@@ -56,103 +73,154 @@ Aturan:
 ### 2.1 `clipper_profiles`
 ```sql
 CREATE TABLE clipper_profiles (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  niches           TEXT[]   NOT NULL DEFAULT '{}',
-  -- contoh niche: 'bisnis', 'edukasi', 'gaming', 'kuliner', 'motivasi', 
-  --               'teknologi', 'hiburan', 'kesehatan', 'travel', 'lifestyle'
-  region           VARCHAR(100),
-  language         VARCHAR(50) DEFAULT 'id',
-  avg_views        INTEGER DEFAULT 0,
-  avg_ctr          DECIMAL(5,2) DEFAULT 0,
-  score            INTEGER DEFAULT 50,  -- 0-100, dihitung otomatis
-  bio              TEXT,
-  social_tiktok    VARCHAR(255),
-  social_youtube   VARCHAR(255),
-  social_instagram VARCHAR(255),
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  niches                TEXT[]   NOT NULL DEFAULT '{}',
+  -- nilai niche: 'bisnis','edukasi','gaming','kuliner','motivasi',
+  --              'teknologi','hiburan','kesehatan','travel','lifestyle'
+  region                VARCHAR(100),
+  language              VARCHAR(50) DEFAULT 'id',
+  avg_views             INTEGER DEFAULT 0,
+  avg_ctr               DECIMAL(5,2) DEFAULT 0,
+  score                 INTEGER DEFAULT 50,
+  bio                   TEXT,
+
+  -- Social media accounts (diisi saat verifikasi)
+  tiktok_username       VARCHAR(100),
+  tiktok_verified       BOOLEAN DEFAULT false,
+  tiktok_verified_at    TIMESTAMP,
+
+  youtube_channel_id    VARCHAR(100),
+  youtube_username      VARCHAR(100),
+  youtube_verified      BOOLEAN DEFAULT false,
+  youtube_verified_at   TIMESTAMP,
+
+  instagram_username    VARCHAR(100),
+  instagram_verified    BOOLEAN DEFAULT false,
+  instagram_verified_at TIMESTAMP,
+
+  -- Penalti dari auto-release booking
+  penalty_until         TIMESTAMP,
+
+  created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE(user_id)
 );
 ```
 
-### 2.2 `campaigns`
+### 2.2 `social_verifications`
+```sql
+-- Tabel sementara untuk proses Bio Token Verification
+CREATE TABLE social_verifications (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  platform    VARCHAR(20)  NOT NULL,  -- 'tiktok', 'youtube', 'instagram'
+  username    VARCHAR(100) NOT NULL,
+  code        VARCHAR(60)  NOT NULL,  -- format: NC-[userId6char]-[timestamp4char]
+  status      VARCHAR(20)  NOT NULL DEFAULT 'pending',
+  -- pending → verified → expired
+  expires_at  TIMESTAMP    NOT NULL,  -- NOW() + 24 jam
+  verified_at TIMESTAMP,
+  created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+```
+
+### 2.3 `campaigns`
 ```sql
 CREATE TABLE campaigns (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  brand_id         UUID NOT NULL REFERENCES users(id),
-  name             VARCHAR(255) NOT NULL,
-  video_url        TEXT,           -- YouTube URL yang diinput brand
-  project_id       UUID REFERENCES projects(id),  -- link ke pipeline project yang diproses
-  viral_score      INTEGER,        -- 0-100, rule-based
-  detected_niches  TEXT[] DEFAULT '{}',
-  target_platforms TEXT[] DEFAULT '{}',  -- 'tiktok', 'shorts', 'reels'
-  deadline         TIMESTAMP NOT NULL,
-  package_type     VARCHAR(20) NOT NULL, -- 'starter', 'growth', 'pro'
-  total_credits    INTEGER NOT NULL,
-  reward_pool      INTEGER NOT NULL,   -- 70% dari nilai paket
-  platform_fee     INTEGER NOT NULL,   -- 30% dari nilai paket
-  max_clippers     INTEGER NOT NULL,
-  status           VARCHAR(30) NOT NULL DEFAULT 'draft',
-  -- status flow: draft → processing → ready_review → active → completed → expired
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMP NOT NULL DEFAULT NOW()
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id             UUID NOT NULL REFERENCES users(id),
+  name                 VARCHAR(255) NOT NULL,
+  video_url            TEXT,
+  project_id           UUID REFERENCES projects(id),
+  viral_score          INTEGER,
+  detected_niches      TEXT[] DEFAULT '{}',
+  target_platforms     TEXT[] DEFAULT '{}',  -- 'tiktok','shorts','reels'
+  deadline             TIMESTAMP NOT NULL,
+  package_type         VARCHAR(20) NOT NULL, -- 'starter','growth','pro','ultra'
+  total_credits        INTEGER NOT NULL,
+  credits_remaining    INTEGER NOT NULL DEFAULT 0,
+  reward_pool          INTEGER NOT NULL,
+  platform_fee         INTEGER NOT NULL,
+  max_clippers         INTEGER NOT NULL,
+  videos_verified      INTEGER NOT NULL DEFAULT 0,
+  total_views          BIGINT  NOT NULL DEFAULT 0,
+  first_validated_at   TIMESTAMP,
+  activated_at         TIMESTAMP,
+  extended_at          TIMESTAMP,
+  extension_days       INTEGER DEFAULT 0,
+  compensation_deadline TIMESTAMP,
+  status               VARCHAR(30) NOT NULL DEFAULT 'draft',
+  -- draft → processing → active → kpi_missed → completed | expired
+  created_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
-### 2.3 `campaign_clippers`
+### 2.4 `campaign_clippers`
 ```sql
 CREATE TABLE campaign_clippers (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  campaign_id      UUID NOT NULL REFERENCES campaigns(id),
-  clipper_id       UUID NOT NULL REFERENCES users(id),
-  status           VARCHAR(30) NOT NULL DEFAULT 'invited',
-  -- status flow: invited → accepted → declined → submitted → verified → rewarded
-  submitted_url    TEXT,
-  submitted_at     TIMESTAMP,
-  verified_at      TIMESTAMP,
-  base_reward      INTEGER DEFAULT 0,
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id       UUID NOT NULL REFERENCES campaigns(id),
+  clipper_id        UUID NOT NULL REFERENCES users(id),
+  status            VARCHAR(30) NOT NULL DEFAULT 'invited',
+  -- invited → accepted → declined → submitted → pending_manual_review
+  -- → verified → rewarded | rejected | expired
+  submitted_url     TEXT,
+  submitted_at      TIMESTAMP,
+  verified_at       TIMESTAMP,
+  booking_expires_at TIMESTAMP,
+  slot_number       INTEGER DEFAULT 1,   -- 1 = video pertama, 2 = video kedua
+  platform          VARCHAR(20),         -- 'tiktok','youtube','instagram' (dari URL)
+  view_count        BIGINT  DEFAULT 0,
+  like_count        INTEGER DEFAULT 0,
+  comment_count     INTEGER DEFAULT 0,
+  share_count       INTEGER DEFAULT 0,
+  is_original       BOOLEAN DEFAULT true,
+  performance_score INTEGER DEFAULT 0,
+  final_rank        INTEGER,
+  base_reward       INTEGER DEFAULT 0,
   performance_bonus INTEGER DEFAULT 0,
-  total_reward     INTEGER DEFAULT 0,
-  view_count       INTEGER,
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE(campaign_id, clipper_id)
+  total_reward      INTEGER DEFAULT 0,
+  created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(campaign_id, clipper_id, slot_number)
 );
 ```
 
-### 2.4 `transactions`
+### 2.5 `transactions`
 ```sql
 CREATE TABLE transactions (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id          UUID NOT NULL REFERENCES users(id),
-  type             VARCHAR(40) NOT NULL,
-  -- tipe: 'credit_purchase', 'campaign_debit', 'reward_earn', 'bonus_earn',
-  --       'point_withdraw_request', 'point_withdraw_done'
-  amount           INTEGER NOT NULL,  -- positif = masuk, negatif = keluar
-  balance_type     VARCHAR(10) NOT NULL,  -- 'credit' atau 'point'
-  description      TEXT,
-  reference_id     UUID,   -- campaign_id atau campaign_clipper_id tergantung konteks
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id),
+  type         VARCHAR(40) NOT NULL,
+  -- credit_purchase | campaign_debit | reward_earn | bonus_earn
+  -- point_withdraw_request | point_withdraw_done
+  -- bonus_pool_payout | bonus_pool_residual | voucher_issued
+  amount       INTEGER NOT NULL,
+  balance_type VARCHAR(10) NOT NULL,  -- 'credit' atau 'point'
+  description  TEXT,
+  reference_id UUID,
+  created_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
-### 2.5 `withdrawal_requests`
+### 2.6 `withdrawal_requests`
 ```sql
 CREATE TABLE withdrawal_requests (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id          UUID NOT NULL REFERENCES users(id),
-  amount           INTEGER NOT NULL,  -- dalam poin (1 poin = Rp1)
-  bank_name        VARCHAR(100),
-  account_number   VARCHAR(50),
-  account_name     VARCHAR(100),
-  ewallet_type     VARCHAR(50),   -- 'gopay', 'ovo', 'dana', 'shopee'
-  ewallet_number   VARCHAR(50),
-  status           VARCHAR(20) NOT NULL DEFAULT 'pending',
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id),
+  amount         INTEGER NOT NULL,
+  bank_name      VARCHAR(100),
+  account_number VARCHAR(50),
+  account_name   VARCHAR(100),
+  ewallet_type   VARCHAR(50),
+  ewallet_number VARCHAR(50),
+  status         VARCHAR(20) NOT NULL DEFAULT 'pending',
   -- pending → approved → rejected → processed
-  admin_note       TEXT,
-  processed_at     TIMESTAMP,
-  created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+  admin_note     TEXT,
+  processed_at   TIMESTAMP,
+  created_at     TIMESTAMP NOT NULL DEFAULT NOW()
 );
 ```
 
@@ -160,206 +228,153 @@ CREATE TABLE withdrawal_requests (
 
 ## 3. Business Logic
 
-### 3.1 Paket Campaign
+⚠️ **Seluruh business logic (paket, reward, formula score, lifecycle) ada di BUSINESS_LOGIC_v2.md.**
+Section ini hanya quick reference. Untuk implementasi kode, baca BUSINESS_LOGIC_v2.md.
+
+### Quick Reference Paket (dari BUSINESS_LOGIC_v2.md)
 ```typescript
-const CAMPAIGN_PACKAGES = {
-  starter: {
-    price_idr:   499_000,
-    credits:     50,
-    max_clippers: 50,
-    reward_pool: 349_300,   // 70% × 499000
-    platform_fee: 149_700,  // 30% × 499000
-  },
-  growth: {
-    price_idr:   1_499_000,
-    credits:     180,
-    max_clippers: 180,
-    reward_pool: 1_049_300,
-    platform_fee: 449_700,
-  },
-  pro: {
-    price_idr:   3_999_000,
-    credits:     500,
-    max_clippers: 500,
-    reward_pool: 2_799_300,
-    platform_fee: 1_199_700,
-  },
+const PACKAGES = {
+  starter: { price_idr: 499_000,   credits: 50,  clipper_invited: 35,  campaign_days: 7  },
+  growth:  { price_idr: 1_499_000, credits: 120, clipper_invited: 70,  campaign_days: 7  },
+  pro:     { price_idr: 3_999_000, credits: 280, clipper_invited: 150, campaign_days: 14 },
+  ultra:   { price_idr: 6_999_000, credits: 500, clipper_invited: 260, campaign_days: 14 },
 };
+// Alokasi: 20% platform fee, 80% clipper pool (60% base fund + 40% bonus pool)
+// Sisa bonus pool tidak terdistribusi → masuk revenue platform
 ```
 
-### 3.2 Reward per Clipper
+### Rule-Based Viral Score (MVP, tidak pakai Groq)
 ```typescript
-// Base reward per video terverifikasi
-const BASE_REWARD_POINTS = 10_000; // Rp10.000
-
-// Performance bonus berdasarkan views
-function getPerformanceBonus(views: number): number {
-  if (views >= 100_000) return 100_000;  // Rp100.000
-  if (views >= 10_000)  return 25_000;   // Rp25.000
-  if (views >= 1_000)   return 5_000;    // Rp5.000
-  return 0;
-}
-```
-
-### 3.3 Rule-Based Viral Score
-```typescript
-// Dipanggil saat Brand submit YouTube URL, sebelum pipeline jalan
 function calculateViralScore(title: string, description: string): {
-  score: number;
-  niches: string[];
+  score: number; niches: string[];
 } {
   const NICHE_KEYWORDS: Record<string, string[]> = {
-    bisnis:     ['bisnis', 'business', 'entrepreneur', 'startup', 'revenue', 'profit', 'uang', 'modal', 'investasi'],
-    edukasi:    ['belajar', 'tutorial', 'tips', 'cara', 'bagaimana', 'how to', 'learn', 'guide', 'penjelasan'],
-    gaming:     ['game', 'gaming', 'gameplay', 'esports', 'mobile legends', 'valorant', 'minecraft', 'ff', 'genshin'],
-    kuliner:    ['masak', 'resep', 'makan', 'food', 'kuliner', 'restaurant', 'cafe', 'jajan', 'street food'],
-    motivasi:   ['motivasi', 'inspirasi', 'sukses', 'motivation', 'mindset', 'growth', 'semangat', 'bangkit'],
-    teknologi:  ['ai', 'tech', 'teknologi', 'coding', 'programming', 'software', 'digital', 'gadget', 'review'],
-    hiburan:    ['lucu', 'funny', 'comedy', 'entertainment', 'viral', 'meme', 'receh', 'ngakak'],
-    kesehatan:  ['sehat', 'health', 'fitness', 'olahraga', 'gym', 'diet', 'nutrisi', 'dokter', 'tips kesehatan'],
-    lifestyle:  ['lifestyle', 'vlog', 'daily', 'travel', 'wisata', 'fashion', 'style', 'aesthetic'],
+    bisnis:    ['bisnis','business','entrepreneur','startup','revenue','uang','investasi'],
+    edukasi:   ['belajar','tutorial','tips','cara','how to','learn','guide'],
+    gaming:    ['game','gaming','gameplay','esports','mobile legends','valorant'],
+    kuliner:   ['masak','resep','makan','food','kuliner','restaurant','cafe'],
+    motivasi:  ['motivasi','inspirasi','sukses','motivation','mindset','growth'],
+    teknologi: ['ai','tech','teknologi','coding','programming','software','digital'],
+    hiburan:   ['lucu','funny','comedy','viral','meme','entertainment'],
+    kesehatan: ['sehat','health','fitness','olahraga','gym','diet'],
+    lifestyle: ['lifestyle','vlog','daily','travel','wisata','fashion'],
   };
-
   const text = (title + ' ' + description).toLowerCase();
-  const detectedNiches = Object.entries(NICHE_KEYWORDS)
-    .filter(([_, keywords]) => keywords.some(k => text.includes(k)))
-    .map(([niche]) => niche);
-
-  // Hitung skor dari faktor-faktor sederhana
+  const niches = Object.entries(NICHE_KEYWORDS)
+    .filter(([, kw]) => kw.some(k => text.includes(k)))
+    .map(([n]) => n);
   let score = 45;
-  if (detectedNiches.length >= 1) score += 20;
-  if (detectedNiches.length >= 2) score += 10;
+  if (niches.length >= 1) score += 20;
+  if (niches.length >= 2) score += 10;
   if (title.length >= 20 && title.length <= 80) score += 10;
-  if (['bisnis', 'edukasi', 'teknologi', 'motivasi'].some(n => detectedNiches.includes(n))) score += 5;
+  if (['bisnis','edukasi','teknologi'].some(n => niches.includes(n))) score += 5;
   score = Math.min(score + Math.floor(Math.random() * 8), 98);
-
-  return {
-    score,
-    niches: detectedNiches.length > 0 ? detectedNiches : ['umum'],
-  };
+  return { score, niches: niches.length > 0 ? niches : ['umum'] };
 }
 ```
-
-### 3.4 AI Matching Logic
-```typescript
-// Dipanggil saat campaign status berubah dari ready_review → active (setelah pembayaran)
-async function matchClippers(campaignId: string): Promise<void> {
-  const campaign = await getCampaign(campaignId);
-
-  // Ambil clipper yang nichenya overlap dengan campaign
-  const candidates = await db.query(`
-    SELECT cp.user_id, cp.score, cp.niches,
-           COUNT(FILTER (cc.status = 'verified')) as past_verified
-    FROM clipper_profiles cp
-    LEFT JOIN campaign_clippers cc ON cc.clipper_id = cp.user_id AND cc.status = 'verified'
-    WHERE cp.niches && $1::text[]   -- overlap array
-    GROUP BY cp.user_id, cp.score, cp.niches
-    ORDER BY cp.score DESC, past_verified DESC
-    LIMIT $2
-  `, [campaign.detected_niches, campaign.max_clippers]);
-
-  // Buat campaign_clipper records dengan status 'invited'
-  for (const candidate of candidates) {
-    await db.insert('campaign_clippers', {
-      campaign_id: campaignId,
-      clipper_id:  candidate.user_id,
-      status:      'invited',
-    });
-    // TODO: kirim notifikasi ke clipper (bisa email atau in-app notif)
-  }
-}
-```
-
-### 3.5 Withdrawal — Manual Admin (MVP)
-- Clipper request withdrawal → record masuk ke `withdrawal_requests` dengan status `pending`
-- Minimum withdrawal: 50.000 poin (Rp50.000)
-- Admin approve/reject via admin panel
-- Saat admin approve: kurangi `point_balance` user, update status → `processed`
-- Otomasi disbursement via Xendit/Midtrans akan ditambah di Sprint 3
 
 ---
 
-## 4. API Endpoints Baru (NestJS)
+## 4. API Endpoints (NestJS)
 
-Semua endpoint baru menggunakan prefix `/api`. Auth via JWT Bearer (sama seperti sekarang).
+Semua endpoint menggunakan prefix `/api`, auth via JWT Bearer.
 
-### 4.1 Modul: Clipper Profile
+### 4.1 Modul: Clipper Profile & Social Verification
 ```
-GET    /api/clipper/profile          → ambil profil clipper user sendiri
-PUT    /api/clipper/profile          → buat/update profil (juga set is_clipper=true)
-GET    /api/clipper/campaigns        → list campaign yang di-invite untuk user ini
-POST   /api/clipper/campaigns/:id/accept   → accept invite
-POST   /api/clipper/campaigns/:id/decline  → decline invite
-POST   /api/clipper/campaigns/:id/submit   → submit social media URL
-GET    /api/clipper/earnings         → ringkasan poin + riwayat transaksi
-POST   /api/clipper/withdraw         → request withdrawal
+GET    /api/clipper/profile                       → profil clipper user sendiri
+PUT    /api/clipper/profile                       → buat/update profil DNA
+                                                    (set is_clipper=true)
+
+// --- Social Verification (Bio Token) ---
+POST   /api/clipper/social/generate-code
+       body: { platform: 'tiktok'|'youtube'|'instagram', username: string }
+       → generate kode NC-[hash], simpan ke social_verifications
+       → return: { code, instructions, expires_in: '24 jam' }
+
+POST   /api/clipper/social/verify
+       body: { platform, username }
+       → fetch halaman publik profil platform
+       → cari kode di bio text
+       → jika ketemu: update clipper_profiles verified=true
+       → return: { success, platform, username }
+
+GET    /api/clipper/social/status
+       → return status verifikasi semua platform user ini
+
+// --- Campaign ---
+GET    /api/clipper/campaigns                     → list campaign invite untuk user
+POST   /api/clipper/campaigns/:id/accept          → accept invite (kurangi credits_remaining)
+POST   /api/clipper/campaigns/:id/decline         → decline invite
+POST   /api/clipper/campaigns/:id/submit          → submit URL social media
+                                                    (lihat Section 11 untuk validasi URL)
+GET    /api/clipper/earnings                      → saldo poin + riwayat transaksi
+POST   /api/clipper/withdraw                      → request withdrawal
 ```
 
 ### 4.2 Modul: Campaign (Brand)
 ```
-POST   /api/campaigns/viral-score    → hitung viral score dari YouTube URL (rule-based, no auth)
+POST   /api/campaigns/viral-score    → hitung viral score (no auth needed)
 POST   /api/campaigns                → buat campaign baru (status: draft)
-GET    /api/campaigns                → list campaigns milik brand
+GET    /api/campaigns                → list campaigns milik brand ini
 GET    /api/campaigns/:id            → detail campaign
-PATCH  /api/campaigns/:id            → update campaign (hanya kalau masih draft)
-POST   /api/campaigns/:id/pay        → trigger Midtrans Snap → kalau sukses → active + trigger matching
-GET    /api/campaigns/:id/clippers   → list clipper yang di-assign ke campaign ini
+PATCH  /api/campaigns/:id            → update (hanya saat masih draft)
+POST   /api/campaigns/:id/pay        → trigger Midtrans → sukses → active + matchClippers()
+GET    /api/campaigns/:id/clippers   → list clipper assigned ke campaign
+POST   /api/campaigns/:id/compensation → brand pilih kompensasi (extension|voucher)
 ```
 
 ### 4.3 Modul: Admin
 ```
-GET    /api/admin/campaigns                    → semua campaign (semua brand)
-GET    /api/admin/withdrawals                  → list withdrawal pending
-PATCH  /api/admin/withdrawals/:id              → approve/reject withdrawal
-POST   /api/admin/campaigns/:id/clippers/:cid/verify  → verifikasi submission clipper
-GET    /api/admin/users                        → list semua user
-PATCH  /api/admin/users/:id                    → toggle is_admin, is_clipper, is_brand
+GET    /api/admin/campaigns                               → semua campaign
+GET    /api/admin/withdrawals                             → list withdrawal pending
+PATCH  /api/admin/withdrawals/:id                         → approve/reject
+GET    /api/admin/verifications                           → antrian verifikasi manual
+                                                            (TikTok & Instagram)
+POST   /api/admin/verifications/:campaignClipperId/approve
+       body: { view_count, like_count, comment_count, is_original }
+       → update campaign_clippers dengan data manual
+       → proses reward jika views >= 200
+POST   /api/admin/verifications/:campaignClipperId/reject
+       body: { reason }
+GET    /api/admin/users                                   → list semua user
+PATCH  /api/admin/users/:id                               → toggle flags
 ```
 
-### 4.4 Wallet (shared Brand & Clipper)
+### 4.4 Modul: Wallet (shared)
 ```
-GET    /api/wallet                   → balance credit + poin + riwayat transaksi
+GET    /api/wallet    → credit balance + poin balance + riwayat transaksi
 ```
 
 ---
 
-## 5. Frontend Routes Baru (Next.js App Router)
+## 5. Frontend Routes (Next.js App Router)
 
-### Struktur folder
 ```
 src/app/
-├── (app)/                          ← sudah ada, jangan diubah strukturnya
-│   ├── projects/                   ← TETAP ADA (tool mode)
-│   ├── new/                        ← TETAP ADA (tool mode)
-│   ├── dashboard/                  ← TETAP ADA atau buat baru sebagai home
+├── (app)/
+│   ├── projects/            ← TETAP ADA (tool mode lama)
+│   ├── new/                 ← TETAP ADA (tool mode lama)
 │   │
-│   ├── campaign/                   ← BARU: Brand side
-│   │   ├── new/
-│   │   │   └── page.tsx            ← Wizard 4-step buat campaign
-│   │   ├── [id]/
-│   │   │   └── page.tsx            ← Detail campaign + daftar clipper + metrik
-│   │   └── page.tsx                ← List semua campaign milik brand
+│   ├── campaign/            ← Brand side
+│   │   ├── new/page.tsx     ← Wizard 4-step
+│   │   ├── [id]/page.tsx    ← Dashboard campaign + daftar clipper
+│   │   └── page.tsx         ← List semua campaign brand
 │   │
-│   ├── clipper/                    ← BARU: Clipper side
-│   │   ├── setup/
-│   │   │   └── page.tsx            ← Form isi DNA profile (onboarding clipper)
+│   ├── clipper/
+│   │   ├── setup/page.tsx            ← DNA profile + Social Verification (Step 2)
+│   │   ├── verify/[platform]/page.tsx ← Panduan tempel kode + tombol cek
 │   │   ├── campaigns/
-│   │   │   ├── [id]/
-│   │   │   │   └── page.tsx        ← Detail campaign invite + tombol accept/submit
-│   │   │   └── page.tsx            ← List campaign yang di-invite
-│   │   └── earnings/
-│   │       └── page.tsx            ← Saldo poin + riwayat + form withdrawal
+│   │   │   ├── [id]/page.tsx         ← Detail campaign + submit URL
+│   │   │   └── page.tsx              ← Inbox invite
+│   │   └── earnings/page.tsx         ← Saldo + withdrawal
 │   │
-│   ├── wallet/
-│   │   └── page.tsx                ← BARU: Credit balance + transaksi (brand side)
+│   ├── wallet/page.tsx      ← Credit balance brand
 │   │
-│   └── admin/                      ← BARU (akses terbatas is_admin=true)
-│       ├── withdrawals/
-│       │   └── page.tsx
-│       ├── campaigns/
-│       │   └── page.tsx
-│       └── users/
-│           └── page.tsx
+│   └── admin/
+│       ├── verifications/page.tsx   ← Antrian validasi manual TikTok/IG
+│       ├── withdrawals/page.tsx
+│       ├── campaigns/page.tsx
+│       └── users/page.tsx
 ```
 
 ---
@@ -368,173 +383,321 @@ src/app/
 
 ### 6.1 `/campaign/new` — Wizard 4 Step
 
-**Step 1 — Upload Video**
-- Input: YouTube URL atau upload file
-- Submit → panggil `POST /api/campaigns/viral-score` → tampilkan hasil:
-  - Viral Score (angka besar, misal 87/100)
-  - Detected niches (badge per niche)
-  - Tombol "Lanjut ke Step 2"
+**Step 1:** Input YouTube URL → panggil `POST /api/campaigns/viral-score`
+→ tampilkan Viral Score + detected niches
 
-**Step 2 — Detail Campaign**
-- Input: Nama campaign, Target platform (checkbox: TikTok / Shorts / Reels), Deadline (date picker)
+**Step 2:** Nama campaign, target platform (TikTok/Shorts/Reels), deadline
 
-**Step 3 — Pilih Paket**
-- 3 kartu: Starter (Rp499k / 50 clipper), Growth (Rp1.49jt / 180 clipper), Pro (Rp3.99jt / 500 clipper)
-- Per kartu tampilkan: harga, estimasi clipper, estimasi reward per clipper
+**Step 3:** Pilih paket (Starter/Growth/Pro/Ultra) + tampilkan estimasi clipper & reward
 
-**Step 4 — Review & Bayar**
-- Summary lengkap
-- Tombol "Bayar Sekarang" → Midtrans Snap popup
-- Setelah sukses: backend trigger pipeline (sama seperti `/new`) + trigger matching AI
-- Redirect ke `/campaign/[id]`
+**Step 4:** Review + Midtrans Snap → sukses → pipeline + matchClippers() → redirect `/campaign/[id]`
 
-### 6.2 `/campaign/[id]` — Dashboard Campaign Brand
+### 6.2 `/campaign/[id]` — Dashboard Brand
+Metrik: clipper diundang / aktif / submit / verified / total views
+Tabel clipper: nama, platform, status, link, views, reward, aksi admin
 
+### 6.3 `/clipper/setup` — Onboarding Clipper (2 Step)
+
+**Step 1 — DNA Profile:**
+Form: niches (multi-select), region, language, bio
+
+**Step 2 — Verifikasi Akun Sosial:**
+```
+Per platform (TikTok / YouTube / Instagram):
+  Klik "Hubungkan [Platform]"
+  → sistem generate kode NC-xxxx
+  → tampilkan instruksi: "Tempel kode ini di bio [Platform] kamu sementara"
+  → redirect ke /clipper/verify/[platform]
+```
+
+Minimal 1 platform harus terverifikasi sebelum bisa ambil campaign.
+Setelah setup: is_clipper = true
+
+### 6.4 `/clipper/verify/[platform]` — Halaman Verifikasi Bio
+
+```
 Tampilkan:
-- Status campaign (badge)
-- Viral Score + niche
-- Metrik: Total clipper diundang / Aktif / Submit / Verified / Total views estimasi
-- Tabel clipper: nama, status, link submission, views, reward
-- Progress bar reward pool terpakai
+  - Kode yang harus ditempel: [NC-A3X9KQ]
+  - Screenshot panduan: di mana letak bio di platform tersebut
+  - Countdown timer: kode berlaku XX jam XX menit
+  - Tombol "Saya sudah tempel kode, verifikasi sekarang"
+    → panggil POST /api/clipper/social/verify
+    → sukses: centang hijau, tombol "Lanjut"
+    → gagal: pesan error + tombol retry
+  - Catatan: "Setelah berhasil, bio kamu boleh diganti kembali"
+```
 
-### 6.3 `/clipper/campaigns` — Inbox Clipper
+### 6.5 `/clipper/campaigns` — Inbox Invite
+List campaign: nama, niche, deadline, platform, estimasi reward
+Filter: invited / accepted / completed
+Tombol: Accept / Decline
 
-- Hanya tampil campaign yang statusnya `invited` untuk user ini
-- Per item: nama campaign, brand (masked: "Brand Verified"), niche, deadline, estimasi reward
-- Tombol Accept / Decline
+### 6.6 `/clipper/campaigns/[id]` — Detail Campaign
 
-### 6.4 `/clipper/campaigns/[id]` — Detail Campaign Clipper
+Jika status `invited`: brief campaign + tombol Accept / Decline
+Jika status `accepted`:
+  - Instruksi + tombol download aset video (klip dari pipeline)
+  - **Form submit URL** — hanya terima URL dari platform yang sudah terverifikasi clipper ini
+  - Countdown timer 24 jam tersisa
+Jika status `submitted` / `pending_manual_review`: "Sedang diverifikasi"
+Jika status `verified`: tampilkan reward yang diterima
 
-- Jika status `accepted`: tampilkan instruksi + tombol download aset video (klip dari pipeline)
-- Form submit URL social media
-- Jika status `submitted`: tampilkan "Menunggu verifikasi"
-- Jika status `verified`: tampilkan reward yang diterima
+### 6.7 `/clipper/earnings` — Earnings & Withdrawal
+Saldo poin + ekuivalen Rp, riwayat transaksi, form withdrawal (min 50.000 poin)
 
-### 6.5 `/clipper/earnings` — Earnings & Withdrawal
-
-- Saldo poin saat ini (besar, prominent)
-- Equivalen rupiah (poin / 1000 = Rp, atau 1 poin = Rp1 sesuai PRD)
-- Riwayat transaksi (tabel: tanggal, deskripsi, jumlah poin)
-- Form withdrawal:
-  - Pilih metode: Bank Transfer / E-Wallet
-  - Input rekening/nomor
-  - Input jumlah (min 50.000 poin)
-  - Submit → status `pending`, tunggu admin
-
-### 6.6 `/admin/withdrawals`
-
-- Tabel: user, jumlah, metode, rekening, tanggal request
-- Per baris: tombol Approve / Reject + field catatan admin
-- Filter: pending / approved / rejected
-
----
-
-## 7. Koneksi Pipeline Lama dengan Campaign
-
-Ketika Brand submit YouTube URL di Step 1 campaign:
-1. Backend panggil rule-based viral score (tidak pakai Groq, cepat)
-2. Saat Brand bayar (`POST /api/campaigns/:id/pay`) dan Midtrans sukses:
-   - Buat record `projects` seperti biasa (gunakan `ProjectsService` yang sudah ada)
-   - Dispatch job ke BullMQ (persis sama dengan `/new`)
-   - Set `campaigns.project_id = newProject.id`
-   - Campaign status → `processing`
-3. Polling frontend campaign page setiap 3 detik (persis seperti `/projects/[id]`)
-4. Saat project status = `ready`, campaign status → `active`, jalankan `matchClippers()`
-5. Klip yang dihasilkan pipeline inilah yang bisa didownload clipper dari `/clipper/campaigns/[id]`
+### 6.8 `/admin/verifications` — Antrian Validasi Manual
+```
+Tabel: clipper, platform, link video, tanggal submit
+Per baris:
+  - Tombol buka link (buka tab baru)
+  - Input: view_count, like_count, comment_count
+  - Checkbox: "Hashtag sesuai brief" + "Konten orisinal"
+  - Tombol Approve / Reject + field alasan
+Filter: pending / approved / rejected
+```
 
 ---
 
-## 8. Navigasi & UX
+## 7. Validation Service — Alur Submission Video
 
-### Navbar/Sidebar perlu menambahkan
+Saat clipper submit URL, sistem melakukan langkah berikut secara berurutan:
 
-Jika `is_clipper = true` → tampilkan menu "Kampanye Saya" → `/clipper/campaigns`
-Jika pernah buat campaign (is_brand = true) → tampilkan menu "Campaign Brand" → `/campaign`
-Selalu tampilkan: "Proyek" (tool mode lama) → `/projects`
+```
+STEP 1: Parse URL
+  → Ekstrak platform + username + videoId dari URL
+  → Platform diterima:
+      youtube.com/shorts/[id] | youtu.be/[id]
+      tiktok.com/@[user]/video/[id] | vm.tiktok.com/[code]
+      instagram.com/reels/[id] | instagram.com/p/[id]
+  → URL tidak dikenal → tolak otomatis
 
-### Onboarding flow
+STEP 2: Validasi Kepemilikan Akun
+  → Cocokkan username dari URL dengan akun terverifikasi di clipper_profiles
+  → Tidak cocok → tolak: "URL bukan dari akun yang kamu verifikasi"
 
-Jika user pertama kali klik "Daftar sebagai Clipper":
-1. Redirect ke `/clipper/setup`
-2. Isi form DNA (niches, region, language, social links)
-3. Simpan → `is_clipper = true` di users, buat clipper_profiles record
+STEP 3: Fetch Stats (per platform)
+
+  YOUTUBE (otomatis via YouTube Data API v3):
+    → Env: YOUTUBE_API_KEY di api/.env
+    → Endpoint: youtube.googleapis.com/youtube/v3/videos
+    → Fields: viewCount, likeCount, commentCount, publishedAt, privacyStatus
+    → Jika privacyStatus !== 'public' → tolak: "Video tidak publik"
+    → Simpan stats → update campaign_clippers
+    → Lanjut ke Step 4 (auto)
+
+  TIKTOK (semi-otomatis via scraping publik):
+    → Fetch halaman tiktok.com/@user/video/[id] via Puppeteer/Playwright
+    → Parse viewCount dari script tag JSON
+    → Simpan stats → update campaign_clippers
+    → Lanjut ke Step 4 (auto jika berhasil)
+    → Jika scraping gagal → masuk manual queue (status: pending_manual_review)
+
+  INSTAGRAM (manual):
+    → Set status: pending_manual_review
+    → Masuk ke /admin/verifications queue
+    → Admin input stats manual
+
+STEP 4: Cek Originality
+  → Cek: URL yang sama sudah pernah disubmit di campaign ini?
+  → Jika duplikat → tolak
+
+STEP 5: Cek Views Minimum
+  → (Untuk YouTube & TikTok otomatis) views >= 200?
+  → Jika sudah >= 200 → proses reward langsung
+  → Jika belum >= 200 → set status 'submitted', pantau terus (cron tiap 6 jam)
+  → Setelah campaign closed: < 200 → reward hangus → roll ke bonus pool
+
+STEP 6: Notifikasi
+  → Clipper dapat notif: approved/pending/rejected
+```
 
 ---
 
-## 9. Urutan Pengerjaan — Sesi per Sesi
+## 8. Social Verification — Detail Teknis
+
+### Bio Token Format
+```
+NC-[6char userId]-[4char timestamp]
+Contoh: NC-A3X9KQ-7F2B
+```
+
+### Cara Kerja Per Platform
+
+**TikTok** ✅ Otomatis
+```typescript
+// Fetch profil publik
+const url = `https://www.tiktok.com/@${username}`;
+// Gunakan Puppeteer (headless) untuk handle JS rendering
+// Cari token di: document.querySelector('.tiktok-bio') atau meta description
+// Timeout: 15 detik
+```
+
+**YouTube** ✅ Otomatis
+```typescript
+// YouTube Data API v3
+const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet&forUsername=${username}&key=${YOUTUBE_API_KEY}`;
+// Cari token di: channel.snippet.description
+// Atau cari di channel URL: youtube.com/@${username}/about
+```
+
+**Instagram** ⚠️ Manual untuk MVP
+```
+Instagram aktif memblokir scraping.
+MVP: verifikasi manual oleh admin — admin cek bio IG user secara visual.
+Sprint 3: implementasi Meta Basic Display API setelah app approval.
+```
+
+### Env Variables yang Dibutuhkan
+```
+YOUTUBE_API_KEY=xxx        ← YouTube Data API v3
+PUPPETEER_EXECUTABLE_PATH= ← path Chrome untuk Puppeteer (jika tidak default)
+```
+
+---
+
+## 9. Koneksi Pipeline Lama dengan Campaign
+
+Brand submit YouTube URL → saat bayar:
+1. Buat record `projects` via `ProjectsService` (SAMA PERSIS dengan flow `/new`)
+2. Dispatch job ke BullMQ (pipeline tidak diubah)
+3. Set `campaigns.project_id = newProject.id`, status → `processing`
+4. Frontend polling setiap 3 detik (sama seperti `/projects/[id]`)
+5. Project `ready` → campaign `active` → jalankan `matchClippers()`
+6. Klip hasil pipeline ini yang bisa didownload clipper
+
+---
+
+## 10. Navigasi & UX
+
+### Sidebar/Navbar
+```
+Selalu: "Proyek" → /projects   (tool mode)
+Jika is_clipper: "Kampanye Saya" → /clipper/campaigns
+Jika is_brand:   "Campaign Brand" → /campaign
+Jika is_admin:   "Admin" → /admin (dropdown)
+```
+
+### Guard: T&C Modal
+Sebelum clipper bisa klik "Ambil Campaign" PERTAMA KALI:
+→ Tampilkan TnC modal (komponen terpisah: `ClipperTnCModal`)
+→ Setelah setuju: set `users.tnc_accepted_at = NOW()`
+→ Cek di backend: jika `tnc_accepted_at IS NULL` → return 403 + error `TNC_NOT_ACCEPTED`
+
+### Guard: Verifikasi Sosial
+Sebelum clipper bisa submit URL video:
+→ Cek apakah ada minimal 1 platform terverifikasi di clipper_profiles
+→ Jika belum ada → redirect ke /clipper/setup?step=2
+
+---
+
+## 11. Urutan Pengerjaan — Sesi per Sesi
 
 ### Sesi 1 — Fondasi DB & Auth Guard
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 1. Baca SPRINT2_PRD.md.
-> Task: (1) buat migrasi Prisma/SQL untuk semua tabel baru di Section 2,
-> (2) tambah kolom baru ke tabel users (Section 1),
-> (3) update NestJS auth guard agar bisa cek is_admin untuk route admin.
-> Jangan ubah file di api/src/jobs/ sama sekali."
+```
+Baca SPRINT2_PRD.md dan BUSINESS_LOGIC_v2.md.
+Kerjakan HANYA Sesi 1:
+  (1) Migrasi SQL untuk SEMUA tabel baru di Section 2
+  (2) Kolom baru ke tabel users (Section 1)
+  (3) NestJS auth guard untuk cek is_admin dan tnc_accepted_at
+Jangan sentuh api/src/jobs/ sama sekali.
+Konfirmasi schema sebelum jalankan migrasi.
+```
 
-### Sesi 2 — Viral Score & Campaign API (Backend)
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 2. Baca SPRINT2_PRD.md.
-> Task: (1) buat CampaignModule di NestJS dengan semua endpoint di Section 4.2,
-> (2) implementasi rule-based viral score dari Section 3.3,
-> (3) buat service untuk koneksi pipeline ke campaign (Section 7).
-> Jangan ubah file di api/src/jobs/ sama sekali."
+### Sesi 2 — Campaign API Backend
+```
+Baca SPRINT2_PRD.md dan BUSINESS_LOGIC_v2.md.
+Kerjakan HANYA Sesi 2:
+  (1) CampaignModule NestJS — endpoint Section 4.2
+  (2) Rule-based viral score — Section 3
+  (3) Koneksi campaign ke pipeline — Section 9
+  (4) matchClippers() service
+PENTING: Viral score = rule-based. JANGAN panggil Groq.
+PENTING: Gunakan ProjectsService yang sudah ada untuk pipeline.
+```
 
-### Sesi 3 — Campaign Wizard Frontend (Brand)
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 3. Baca SPRINT2_PRD.md.
-> Task: buat halaman /campaign/new (wizard 4 step) dan /campaign/[id]
-> sesuai Section 6.1 dan 6.2. Gunakan komponen UI yang sudah ada di proyek."
+### Sesi 3 — Campaign Frontend (Brand)
+```
+Baca SPRINT2_PRD.md.
+Kerjakan HANYA Sesi 3:
+  (1) /campaign/new — wizard 4 step (Section 6.1)
+  (2) /campaign/[id] — dashboard brand (Section 6.2)
+  (3) /campaign — list campaigns
+Gunakan komponen UI yang sudah ada. Jangan install library baru tanpa konfirmasi.
+```
 
-### Sesi 4 — Clipper Module (Backend + Frontend)
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 4. Baca SPRINT2_PRD.md.
-> Task: (1) buat ClipperModule di NestJS (semua endpoint Section 4.1),
-> (2) buat halaman /clipper/setup, /clipper/campaigns, /clipper/campaigns/[id],
-> (3) buat halaman /clipper/earnings sesuai Section 6.3-6.5."
+### Sesi 4 — Clipper Module + Social Verification
+```
+Baca SPRINT2_PRD.md — fokus Section 4.1, 6.3, 6.4, 6.5, 8.
+Kerjakan HANYA Sesi 4:
+  BAGIAN A — Backend:
+    (1) ClipperModule NestJS — semua endpoint Section 4.1
+    (2) SocialVerificationService — generate kode + fetch & cek bio publik
+        TikTok: Puppeteer, YouTube: YouTube Data API v3, Instagram: manual flag
+  BAGIAN B — Frontend:
+    (3) /clipper/setup — 2 step: DNA profile + social verification
+    (4) /clipper/verify/[platform] — panduan + tombol cek
+    (5) /clipper/campaigns dan /clipper/campaigns/[id]
+    (6) /clipper/earnings
+Install Puppeteer jika belum ada: npm install puppeteer
+Kerjakan Bagian A sampai selesai dulu, konfirmasi, baru Bagian B.
+```
 
-### Sesi 5 — Admin Panel & Withdrawal
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 5. Baca SPRINT2_PRD.md.
-> Task: (1) buat AdminModule di NestJS (endpoint Section 4.3),
-> (2) buat halaman /admin/withdrawals dan /admin/campaigns,
-> (3) guard route admin hanya untuk is_admin=true."
+### Sesi 5 — Validation Service + Admin Panel
+```
+Baca SPRINT2_PRD.md — fokus Section 7, 4.3, 6.8.
+Kerjakan HANYA Sesi 5:
+  (1) ValidationService — alur lengkap Section 7
+      YouTube: YouTube Data API v3 (auto)
+      TikTok: Puppeteer scraping (auto, fallback manual)
+      Instagram: langsung masuk manual queue
+  (2) AdminModule NestJS — endpoint Section 4.3
+  (3) /admin/verifications — antrian validasi manual (Section 6.8)
+  (4) /admin/withdrawals dan /admin/campaigns
+  (5) Guard: semua route /admin/* hanya is_admin=true
+```
 
 ### Sesi 6 — Wallet, Navigasi & Polish
-**Instruksi ke Claude Code:**
-> "Kerjakan hanya Sesi 6. Baca SPRINT2_PRD.md.
-> Task: (1) buat /wallet page, (2) update sidebar/navbar sesuai Section 8,
-> (3) buat onboarding flow clipper setup, (4) pastikan semua menu lama
-> (/projects, /new) tetap ada dan accessible."
+```
+Baca SPRINT2_PRD.md — fokus Section 10.
+Kerjakan HANYA Sesi 6:
+  (1) /wallet page
+  (2) Update sidebar/navbar — Section 10
+  (3) T&C modal guard (ClipperTnCModal) + cek tnc_accepted_at di backend
+  (4) Pastikan semua route LAMA masih ada: /new, /projects, /projects/[id]
+  (5) Test flow end-to-end: brand buat campaign → clipper ambil → submit → admin verif
+```
 
 ---
 
-## 10. Hal-hal yang Sering Salah — Ingatkan Claude Code
+## 12. Hal-hal yang Sering Salah — Ingatkan Claude Code
 
-1. **Pipeline tidak boleh diubah** — pipeline.service.ts adalah blackbox
-2. **Koneksi campaign ke pipeline** lewat ProjectsService yang sudah ada, bukan membuat pipeline baru
-3. **Viral score** di MVP adalah rule-based, BUKAN memanggil Groq
-4. **Withdrawal** hanya manual admin, belum otomatis ke rekening
-5. **Clipper dibebaskan** untuk edit video di mana saja — nineClip tidak paksa pakai tool internal
-6. **User yang sama** bisa jadi clipper dan brand sekaligus — tidak ada akun terpisah
-7. **Fetur lama** (Tool Mode / /projects) tetap ada, tetap punya monetisasi sendiri
+1. `api/src/jobs/` tidak boleh disentuh dalam kondisi apapun
+2. Koneksi campaign ke pipeline LEWAT ProjectsService yang sudah ada
+3. Viral score MVP = rule-based, BUKAN Groq
+4. Withdrawal = manual admin, belum otomatis disbursement
+5. Business logic (reward, score, lifecycle) ada di BUSINESS_LOGIC_v2.md bukan di sini
+6. Social verification = Bio Token (bukan OAuth) — tidak butuh app approval platform
+7. YouTube = YouTube Data API (official), TikTok = scraping publik, Instagram = manual
+8. Submission URL harus cocok dengan username yang SUDAH TERVERIFIKASI clipper tersebut
+9. Sisa bonus pool → `bonus_pool_residual` → platform revenue, bukan dibiarkan menggantung
+10. T&C modal hanya muncul SEKALI (first time), cek `tnc_accepted_at IS NULL`
+11. `credits_remaining` dikurangi saat BOOKING (reserved), bukan saat submit
+12. Penalti clipper: `penalty_until` di clipper_profiles, cek sebelum boleh ambil campaign baru
 
 ---
 
-## 11. Ringkasan Paket & Reward (Quick Reference)
+## 13. Quick Reference Finansial (dari BUSINESS_LOGIC_v2.md)
 
-| Paket | Harga | Max Clipper | Reward Pool (70%) | Platform Fee (30%) |
-|---|---|---|---|---|
-| Starter Pulse | Rp499.000 | 50 | Rp349.300 | Rp149.700 |
-| Growth Flow | Rp1.499.000 | 180 | Rp1.049.300 | Rp449.700 |
-| Pro Surge | Rp3.999.000 | 500 | Rp2.799.300 | Rp1.199.700 |
+| Paket | Harga | Kredit | Clipper | Pool Clipper (80%) | Platform Fee (20%) |
+|---|---|---|---|---|---|
+| Starter | Rp499.000 | 50 | 35 | Rp399.200 | Rp99.800 |
+| Growth | Rp1.499.000 | 120 | 70 | Rp1.199.200 | Rp299.800 |
+| Pro | Rp3.999.000 | 280 | 150 | Rp3.199.200 | Rp799.800 |
+| Ultra | Rp6.999.000 | 500 | 260 | Rp5.599.200 | Rp1.399.800 |
 
-**Reward per clipper:**
-- Base reward: Rp10.000 (10.000 poin) per submission terverifikasi
-- Bonus 1.000–9.999 views: +Rp5.000
-- Bonus 10.000–99.999 views: +Rp25.000
-- Bonus 100.000+ views: +Rp100.000
+**Reward per video (Base Fund ÷ kredit):**
+Starter Rp4.790 | Growth Rp5.996 | Pro Rp6.855 | Ultra Rp6.719
 
-**Currency:**
-- Brand bayar dengan IDR → dapat Campaign Credit
-- Clipper dapat Clipper Point (1 Point = Rp1)
-- Minimum withdrawal: 50.000 poin (Rp50.000)
+**Minimum views untuk dapat reward: 200 views**
+**Minimum withdrawal: 50.000 poin (Rp50.000)**
+**1 Clipper Point = Rp1**

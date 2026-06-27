@@ -28,6 +28,7 @@ export class UsersService {
         primaryRole: true,
         creditBalance: true,
         pointBalance: true,
+        tncAcceptedAt: true,
       },
     });
     if (!user) throw new NotFoundException('User tidak ditemukan');

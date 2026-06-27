@@ -13,6 +13,7 @@
 import type {
   AdminCampaign,
   AdminCampaignClipper,
+  AdminManualVerification,
   AdminUser,
   AdminWithdrawal,
   Campaign,
@@ -29,6 +30,7 @@ import type {
   Project,
   ProcessingStage,
   ProjectStatus,
+  SocialVerificationStatus,
   ViralScoreResult,
   WalletData,
 } from "./types";
@@ -584,6 +586,11 @@ export async function getClipperCampaign(id: string): Promise<ClipperCampaignDet
   return apiFetch<ClipperCampaignDetail>(`/clipper/campaigns/${id}`);
 }
 
+/** Setuju T&C sebelum booking pertama (wajib, sekali saja). */
+export async function acceptTnc(): Promise<void> {
+  await apiFetch("/clipper/accept-tnc", { method: "POST" });
+}
+
 export async function acceptInvite(id: string): Promise<void> {
   await apiFetch(`/clipper/campaigns/${id}/accept`, { method: "POST" });
 }
@@ -618,6 +625,34 @@ export async function requestWithdraw(input: WithdrawInput): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Social Verification endpoints (v2-5)
+// ---------------------------------------------------------------------------
+
+export async function getSocialStatus(): Promise<SocialVerificationStatus> {
+  return apiFetch<SocialVerificationStatus>("/clipper/social/status");
+}
+
+export async function generateSocialCode(
+  platform: string,
+  username: string,
+): Promise<{ code: string; platform: string; username: string; expiresIn: string; instructions: string }> {
+  return apiFetch("/clipper/social/generate-code", {
+    method: "POST",
+    body: JSON.stringify({ platform, username }),
+  });
+}
+
+export async function verifySocialCode(
+  platform: string,
+  username: string,
+): Promise<{ success: boolean; manual?: boolean; platform: string; message?: string; username?: string }> {
+  return apiFetch("/clipper/social/verify", {
+    method: "POST",
+    body: JSON.stringify({ platform, username }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Wallet endpoint (Sprint 2)
 // ---------------------------------------------------------------------------
 
@@ -637,15 +672,45 @@ export async function adminGetCampaignClippers(id: string): Promise<AdminCampaig
   return apiFetch<AdminCampaignClipper[]>(`/admin/campaigns/${id}/clippers`);
 }
 
+export interface AdminVerifyInput {
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+  shareCount: number;
+  isOriginal: boolean;
+}
+
 export async function adminVerify(
   campaignId: string,
   ccId: string,
-  viewCount: number,
+  input: AdminVerifyInput,
 ): Promise<void> {
   await apiFetch(`/admin/campaigns/${campaignId}/clippers/${ccId}/verify`, {
     method: "POST",
-    body: JSON.stringify({ viewCount }),
+    body: JSON.stringify(input),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Admin Manual Verification Queue (v2-6)
+// ---------------------------------------------------------------------------
+
+export async function adminGetManualQueue(): Promise<AdminManualVerification[]> {
+  return apiFetch<AdminManualVerification[]>("/admin/verifications");
+}
+
+export async function adminApproveManual(
+  id: string,
+  input: { viewCount: number; likeCount: number; commentCount: number; shareCount: number; isOriginal: boolean },
+): Promise<void> {
+  await apiFetch(`/admin/verifications/${id}/approve`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function adminRejectManual(id: string): Promise<void> {
+  await apiFetch(`/admin/verifications/${id}/reject`, { method: "POST", body: JSON.stringify({}) });
 }
 
 export async function adminGetWithdrawals(status?: string): Promise<AdminWithdrawal[]> {

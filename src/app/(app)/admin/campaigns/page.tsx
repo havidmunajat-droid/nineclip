@@ -22,9 +22,20 @@ function CampaignsInner() {
   const [open, setOpen] = useState<string | null>(null);
   const [clippers, setClippers] = useState<Record<string, AdminCampaignClipper[]>>({});
   const [loadingClippers, setLoadingClippers] = useState(false);
-  const [views, setViews] = useState<Record<string, string>>({});
+  const [verifyForms, setVerifyForms] = useState<Record<string, {
+    viewCount: string; likeCount: string; commentCount: string; shareCount: string; isOriginal: boolean;
+  }>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  function getForm(ccId: string) {
+    return verifyForms[ccId] ?? { viewCount: "", likeCount: "", commentCount: "", shareCount: "", isOriginal: true };
+  }
+  function setFormField<K extends "viewCount" | "likeCount" | "commentCount" | "shareCount" | "isOriginal">(
+    ccId: string, key: K, val: string | boolean,
+  ) {
+    setVerifyForms((p) => ({ ...p, [ccId]: { ...getForm(ccId), [key]: val } }));
+  }
 
   useEffect(() => {
     adminGetCampaigns()
@@ -56,12 +67,19 @@ function CampaignsInner() {
   );
 
   async function verify(campaignId: string, cc: AdminCampaignClipper) {
-    const v = parseInt(views[cc.id] || "0", 10);
-    if (Number.isNaN(v) || v < 0 || busy) return;
+    const f = getForm(cc.id);
+    const viewCount = parseInt(f.viewCount || "0", 10);
+    if (Number.isNaN(viewCount) || viewCount < 0 || busy) return;
     setBusy(cc.id);
     setError(null);
     try {
-      await adminVerify(campaignId, cc.id, v);
+      await adminVerify(campaignId, cc.id, {
+        viewCount,
+        likeCount: parseInt(f.likeCount || "0", 10),
+        commentCount: parseInt(f.commentCount || "0", 10),
+        shareCount: parseInt(f.shareCount || "0", 10),
+        isOriginal: f.isOriginal,
+      });
       const list = await adminGetCampaignClippers(campaignId);
       setClippers((p) => ({ ...p, [campaignId]: list }));
     } catch (err) {
@@ -145,17 +163,34 @@ function CampaignsInner() {
                           </div>
 
                           {cc.status === "submitted" ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number"
-                                placeholder="views"
-                                value={views[cc.id] ?? ""}
-                                onChange={(e) => setViews((p) => ({ ...p, [cc.id]: e.target.value }))}
-                                className="w-28"
-                              />
-                              <Button size="sm" onClick={() => verify(c.id, cc)} disabled={busy !== null}>
-                                {busy === cc.id ? <Loader2 className="size-4 animate-spin" /> : "Verifikasi"}
-                              </Button>
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap gap-2">
+                                {(["viewCount", "likeCount", "commentCount", "shareCount"] as const).map((k) => (
+                                  <Input
+                                    key={k}
+                                    type="number"
+                                    min="0"
+                                    placeholder={k === "viewCount" ? "views *" : k.replace("Count", "")}
+                                    value={getForm(cc.id)[k]}
+                                    onChange={(e) => setFormField(cc.id, k, e.target.value)}
+                                    className="w-24"
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <label className="flex items-center gap-1.5 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={getForm(cc.id).isOriginal}
+                                    onChange={(e) => setFormField(cc.id, "isOriginal", e.target.checked)}
+                                    className="size-3.5 accent-lime"
+                                  />
+                                  Original
+                                </label>
+                                <Button size="sm" onClick={() => verify(c.id, cc)} disabled={busy !== null}>
+                                  {busy === cc.id ? <Loader2 className="size-4 animate-spin" /> : "Verifikasi"}
+                                </Button>
+                              </div>
                             </div>
                           ) : (
                             cc.viewCount !== null && (

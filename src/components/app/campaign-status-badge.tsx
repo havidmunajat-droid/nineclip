@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import type { CampaignStatus } from "@/lib/types";
-import { CheckCircle2, Clock, FileText, Loader2, Rocket, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, Loader2, Rocket, XCircle } from "lucide-react";
 
 const map: Record<
   CampaignStatus,
@@ -10,6 +10,7 @@ const map: Record<
   processing: { label: "Memproses", variant: "warning", icon: Loader2 },
   ready_review: { label: "Menunggu review", variant: "warning", icon: Clock },
   active: { label: "Aktif", variant: "success", icon: Rocket },
+  kpi_missed: { label: "KPI Tidak Tercapai", variant: "danger", icon: AlertTriangle },
   completed: { label: "Selesai", variant: "success", icon: CheckCircle2 },
   expired: { label: "Berakhir", variant: "muted", icon: XCircle },
 };
