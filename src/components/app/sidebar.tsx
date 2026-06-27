@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Logo } from "@/components/brand/logo";
 import { useAuth } from "@/lib/auth";
+import { useNotifications } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
 
 type NavItem = { href: string; label: string; icon: typeof LayoutGrid };
@@ -34,6 +35,7 @@ const tailNav: NavItem[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
+  const { inviteCount } = useNotifications();
   const minutesUsed = user?.minutesUsed ?? 0;
   const minutesQuota = user?.minutesQuota ?? 0;
   const usedPct = minutesQuota
@@ -70,6 +72,7 @@ export function Sidebar() {
           const active =
             pathname === item.href ||
             (item.href !== "/dashboard" && pathname.startsWith(item.href));
+          const showBadge = item.href === "/clipper/campaigns" && inviteCount > 0;
           return (
             <Link
               key={item.href}
@@ -82,7 +85,12 @@ export function Sidebar() {
               )}
             >
               <item.icon className="size-[18px]" />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {showBadge && (
+                <span className="flex size-5 items-center justify-center rounded-full bg-lime text-[10px] font-bold text-[hsl(80_60%_6%)]">
+                  {inviteCount > 9 ? "9+" : inviteCount}
+                </span>
+              )}
             </Link>
           );
         })}

@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
+import { useNotifications } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -32,6 +33,7 @@ export function Topbar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { inviteCount } = useNotifications();
 
   async function onLogout() {
     await logout();
@@ -58,10 +60,20 @@ export function Topbar() {
             <Plus className="size-4" /> Project baru
           </Link>
         </Button>
-        <button className="relative flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground">
+        <Link
+          href="/clipper/campaigns"
+          className="relative flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground"
+          aria-label="Notifikasi"
+        >
           <Bell className="size-5" />
-          <span className="absolute right-2 top-2 size-1.5 rounded-full bg-lime" />
-        </button>
+          {inviteCount > 0 ? (
+            <span className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-lime text-[9px] font-bold text-[hsl(80_60%_6%)]">
+              {inviteCount > 9 ? "9+" : inviteCount}
+            </span>
+          ) : (
+            <span className="absolute right-2 top-2 size-1.5 rounded-full bg-lime/40" />
+          )}
+        </Link>
         <div className="flex items-center gap-2.5 rounded-lg border border-border bg-secondary/40 py-1.5 pl-1.5 pr-3">
           <Avatar className="size-7">
             <AvatarFallback>{user?.initials ?? "?"}</AvatarFallback>
